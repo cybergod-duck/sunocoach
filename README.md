@@ -47,7 +47,7 @@ OAuth handles auth automatically — no API keys to copy-paste.
 | Tier | Price | Sessions | Features |
 |------|-------|----------|----------|
 | **Free** | $0 | 10/month | Read-only workflow, basic style prompts |
-| **Contributor** | $0 | Unlimited | Submit + vote on workflow patterns (email verify only) |
+| **Contributor** | $0 | 10/month until 3 approved patterns, then Unlimited | Submit + vote on workflow patterns (email verify only) |
 | **Pro** | $9/mo | Unlimited | Client profiles, priority patterns, email support |
 
 [Upgrade to Pro](https://sunocoach.onrender.com/billing/checkout)

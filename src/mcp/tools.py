@@ -194,18 +194,20 @@ async def start_session(user_id: str, workflow_id: Optional[str] = None) -> Dict
             return {"error": "No active workflow pattern available"}
         workflow_id = str(wf["id"])
 
-    # Check rate limit for free tier
-    user = await fetchrow("SELECT tier FROM users WHERE id = $1", user_id)
+    # Check rate limit for free tier and contributors without 3 approved patterns
+    user = await fetchrow("SELECT tier, contributor_submissions FROM users WHERE id = $1", user_id)
     if not user:
         return {"error": "User not found"}
 
-    if user["tier"] == "free":
+    if user["tier"] == "free" or (user["tier"] == "contributor" and user["contributor_submissions"] < 3):
         current_month = await fetchrow(
             "SELECT session_count FROM session_usage WHERE user_id = $1 AND month_year = to_char(NOW(), 'YYYY-MM')",
             user_id
         )
-        if current_month and current_month["session_count"] >= 10:
-            return {"error": "Free tier limit reached (10 sessions/month). Upgrade to Pro."}
+        limit = 10
+        tier_name = "Free" if user["tier"] == "free" else "Contributor (pending approval)"
+        if current_month and current_month["session_count"] >= limit:
+            return {"error": f"{tier_name} tier limit reached ({limit} sessions/month). Submit and get 3 patterns approved to unlock unlimited sessions, or upgrade to Pro."}
 
     # Create session
     session = await fetchrow(
@@ -610,6 +612,14 @@ async def vote_on_pattern(user_id: str, pattern_id: str, rating: int, session_ev
             pattern_id
         )
         promoted = True
+
+        # Increment contributor_submissions for the pattern submitter
+        await execute(
+            "UPDATE users SET contributor_submissions = contributor_submissions + 1 "
+            "WHERE id = (SELECT submitted_by FROM workflow_patterns WHERE id = $1) "
+            "AND tier = 'contributor'",
+            pattern_id
+        )
 
     return {
         "voted": True,

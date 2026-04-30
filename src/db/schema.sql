@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     stripe_customer_id TEXT,
     stripe_subscription_id TEXT,
     tier TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'contributor', 'pro')),
+    contributor_submissions INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
