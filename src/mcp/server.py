@@ -3,7 +3,7 @@ import json
 import traceback
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.tools import (
     get_current_workflow, get_next_step, log_step_result, start_session,
@@ -240,6 +240,20 @@ TOOL_DISPATCH = {
 }
 
 
+# ─── SSE WRAPPER (MCP Streamable HTTP transport) ───
+def sse_response(data: dict, status_code: int = 200, headers: Optional[dict] = None) -> StreamingResponse:
+    """Wrap JSON payload in SSE format for MCP Streamable HTTP."""
+    payload = f"data: {json.dumps(data)}\n\n"
+    response_headers = {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
+    if headers:
+        response_headers.update(headers)
+    return StreamingResponse(
+        iter([payload]),
+        status_code=status_code,
+        headers=response_headers
+    )
+
+
 # ─── SHARED JSON-RPC 2.0 DISPATCHER ───
 # Extracted so both /mcp and / routes use the same logic without duplication.
 async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP") -> Response:
@@ -262,7 +276,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
     params = body.get("params", {})
     req_id = body.get("id")
 
-    # ─── HANDSHAKE: initialize / initialized pass through WITHOUT auth ───
+    # ─── HANDSHAKE: initialize / notifications pass through WITHOUT auth ───
     if method == "initialize":
         data = {
             "jsonrpc": "2.0",
@@ -274,7 +288,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
             }
         }
         print(f"RESPONSE [initialize]: {json.dumps(data)}")
-        return JSONResponse(data)
+        return sse_response(data)
 
     if method == "notifications/initialized":
         print(f"RESPONSE [notifications/initialized]: 204")
@@ -289,24 +303,24 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         print(f"RESPONSE [401-challenge]: no Bearer token")
-        return JSONResponse(
+        return sse_response(
+            {"error": "unauthorized"},
             status_code=401,
             headers={
                 "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
-            },
-            content={"error": "unauthorized"}
+            }
         )
 
     try:
         await validate_token(request)
     except HTTPException:
         print(f"RESPONSE [401-invalid-token]: invalid or expired token")
-        return JSONResponse(
+        return sse_response(
+            {"error": "unauthorized"},
             status_code=401,
             headers={
                 "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
-            },
-            content={"error": "unauthorized"}
+            }
         )
 
     # ─── JSON-RPC 2.0 Method Dispatch (authenticated) ───
@@ -317,7 +331,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
             "result": {"tools": MCP_TOOLS}
         }
         print(f"RESPONSE [tools/list]: {json.dumps(data)}")
-        return JSONResponse(data)
+        return sse_response(data)
 
     if method == "tools/call":
         tool_name = params.get("name")
@@ -330,7 +344,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
                 "error": {"code": -32601, "message": f"Tool not found: {tool_name}"}
             }
             print(f"RESPONSE [tool-not-found]: {json.dumps(data)}")
-            return JSONResponse(data)
+            return sse_response(data)
 
         try:
             result = await TOOL_DISPATCH[tool_name](arguments)
@@ -340,7 +354,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
                 "result": {"content": [{"type": "text", "text": json.dumps(result) if not isinstance(result, str) else result}]}
             }
             print(f"RESPONSE [tools/call-{tool_name}]: {json.dumps(data)}")
-            return JSONResponse(data)
+            return sse_response(data)
         except Exception as e:
             data = {
                 "jsonrpc": "2.0",
@@ -348,7 +362,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
                 "error": {"code": -32603, "message": str(e)}
             }
             print(f"RESPONSE [tools/call-error]: {json.dumps(data)}")
-            return JSONResponse(data, status_code=500)
+            return sse_response(data, status_code=500)
 
     # Unknown method
     data = {
@@ -357,7 +371,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         "error": {"code": -32601, "message": f"Method not found: {method}"}
     }
     print(f"RESPONSE [unknown-method]: {json.dumps(data)}")
-    return JSONResponse(data)
+    return sse_response(data)
 
 
 # ─── /mcp ENDPOINT (Claude Streamable HTTP / OAuth 2.1) ───
