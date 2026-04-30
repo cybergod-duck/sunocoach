@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.tools import (
@@ -242,8 +242,15 @@ TOOL_DISPATCH = {
 
 # ─── SHARED JSON-RPC 2.0 DISPATCHER ───
 # Extracted so both /mcp and / routes use the same logic without duplication.
-async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP") -> JSONResponse:
-    """Authenticate and dispatch a JSON-RPC 2.0 request."""
+async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP") -> Response:
+    """Authenticate and dispatch a JSON-RPC 2.0 request.
+
+    MCP handshake flow:
+      1. initialize     → no auth required, returns protocol version + capabilities
+      2. initialized    → no auth required, returns 204
+      3. tools/list     → auth required
+      4. tools/call     → auth required
+    """
     headers = dict(request.headers)
     print(f"=== {log_label} HIT ===")
     print(f"METHOD: {body.get('method')}")
@@ -251,10 +258,30 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
     print(f"AUTH: {headers.get('authorization', 'MISSING')}")
     print(f"ACCEPT: {headers.get('accept', 'MISSING')}")
 
-    # ─── OAuth 2.1: ALL POST requests require valid Bearer token ───
-    auth_header = request.headers.get("Authorization", "")
-    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
+    method = body.get("method", "")
+    params = body.get("params", {})
+    req_id = body.get("id")
 
+    # ─── HANDSHAKE: initialize / initialized pass through WITHOUT auth ───
+    if method == "initialize":
+        data = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2025-11-25",
+                "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
+                "capabilities": {"tools": {}}
+            }
+        }
+        print(f"RESPONSE [initialize]: {json.dumps(data)}")
+        return JSONResponse(data)
+
+    if method == "initialized":
+        print(f"RESPONSE [initialized]: 204")
+        return Response(status_code=204)
+
+    # ─── AUTH GATE: everything beyond here requires valid Bearer token ───
+    auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         print(f"RESPONSE [401-challenge]: no Bearer token")
         return JSONResponse(
@@ -277,24 +304,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
             content={"error": "unauthorized"}
         )
 
-    # ─── JSON-RPC 2.0 Method Dispatch ───
-    method = body.get("method", "")
-    params = body.get("params", {})
-    req_id = body.get("id")
-
-    if method == "initialize":
-        data = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2025-11-25",
-                "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
-                "capabilities": {"tools": {}}
-            }
-        }
-        print(f"RESPONSE [initialize]: {json.dumps(data)}")
-        return JSONResponse(data)
-
+    # ─── JSON-RPC 2.0 Method Dispatch (authenticated) ───
     if method == "tools/list":
         data = {
             "jsonrpc": "2.0",
