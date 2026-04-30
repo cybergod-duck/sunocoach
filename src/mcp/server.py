@@ -59,26 +59,63 @@ async def mcp_endpoint(request: Request):
     POST /mcp → JSON-RPC messages (initialize, tools/list, tools/call)
     GET /mcp  → MCP manifest (same as GET /)
     
-    Bearer token validation: Claude sends Authorization: Bearer <token> header.
+    OAuth 2.1: ALL POST requests require valid Bearer token.
+    Unauthenticated requests get a 401 challenge with WWW-Authenticate header,
+    telling Claude to start the OAuth flow via the authorization server.
     """
     if request.method == "GET":
         return await root()
     
-    # Validate Bearer token for POST requests (Claude OAuth)
+    # ─── OAuth 2.1 required for ALL POST requests ───
+    # Claude's connector flow:
+    #   1. Fetch discovery → finds registration_endpoint
+    #   2. POST /oauth/register → gets client_id, client_secret
+    #   3. GET /oauth/authorize → user signs in → gets auth code
+    #   4. POST /oauth/token → exchanges code for Bearer token
+    #   5. POST /mcp with Authorization: Bearer <token> → access granted
+    #
+    # If we return 200 without challenging, Claude assumes OAuth is not needed
+    # and shows only "Uninstall" (no "Sign In" button).
+    
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        try:
-            await validate_token(request)
-        except HTTPException:
-            # Token invalid — return JSON-RPC error
-            body = await request.json()
-            return JSONResponse({
+    
+    if not auth_header.startswith("Bearer "):
+        # No token at all → challenge Claude to start OAuth flow
+        base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
+        body = await request.json()
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {
+                    "code": -32001,
+                    "message": "Unauthorized. Use OAuth 2.1 with PKCE to authenticate.",
+                    "authorization_url": f"{base_url}/oauth/authorize"
+                }
+            },
+            status_code=401,
+            headers={
+                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{base_url}/.well-known/oauth-authorization-server"'
+            }
+        )
+    
+    # Has Bearer token → validate it
+    try:
+        await validate_token(request)
+    except HTTPException:
+        # Token invalid or expired
+        body = await request.json()
+        return JSONResponse(
+            {
                 "jsonrpc": "2.0",
                 "id": body.get("id"),
                 "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
-            }, status_code=401)
+            },
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
+        )
     
-    # For POST, delegate to the JSON-RPC handler
+    # Token valid → delegate to JSON-RPC handler
     return await mcp_rpc(request)
 
 # ─── MCP MANIFEST (root) ───
