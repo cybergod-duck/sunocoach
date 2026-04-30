@@ -3,11 +3,7 @@ import secrets
 import hashlib
 import time
 from typing import Dict, Any, Optional
-try:
-    from fastapi import Request, HTTPException
-except ImportError:
-    from utils.http_compat import HTTPException
-    Request = None
+from fastapi import Request, HTTPException
 from db.client import fetchrow, execute
 
 # In-memory token store (replace with Redis/Upstash in production)

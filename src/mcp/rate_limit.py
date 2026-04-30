@@ -1,11 +1,7 @@
 import os
 import time
 from typing import Dict, Optional
-try:
-    from fastapi import Request, HTTPException
-except ImportError:
-    from utils.http_compat import HTTPException
-    Request = None
+from fastapi import Request, HTTPException
 
 # In-memory rate limit store (replace with Redis/Upstash in production)
 _rate_store: Dict[str, Dict] = {}

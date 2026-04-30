@@ -1,11 +1,7 @@
 import os
 import stripe
 from typing import Dict, Any, Optional
-try:
-    from fastapi import Request, HTTPException
-except ImportError:
-    from utils.http_compat import HTTPException
-    Request = None
+from fastapi import Request, HTTPException
 from db.client import fetchrow, execute
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")

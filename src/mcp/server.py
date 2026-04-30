@@ -1,16 +1,10 @@
 import os
 import json
+import traceback
 from typing import Any, Dict
-try:
-    from fastapi import FastAPI, Request, HTTPException
-    from fastapi.responses import JSONResponse
-    from fastapi.middleware.cors import CORSMiddleware
-except ImportError:
-    from utils.http_compat import HTTPException
-    Request = None
-    FastAPI = None
-    JSONResponse = None
-    CORSMiddleware = None
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from mcp.tools import (
     get_current_workflow, get_next_step, log_step_result, start_session,
     generate_style_prompt, build_lyric_structure, validate_prompt,
