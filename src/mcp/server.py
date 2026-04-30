@@ -786,22 +786,41 @@ async def health():
             }
         )
 
-# ─── OAUTH DISCOVERY ───
+# ─── OAUTH DISCOVERY ─── (GET + OPTIONS for browser preflight)
+@app.options("/.well-known/oauth-authorization-server")
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_discovery():
-    return await get_oauth_discovery()
+    data = await get_oauth_discovery()
+    return JSONResponse(
+        content=data,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Cache-Control": "no-cache, no-store",
+        }
+    )
 
-# ─── OAUTH PROTECTED RESOURCE ───
+# ─── OAUTH PROTECTED RESOURCE ─── (GET + OPTIONS for browser preflight)
+@app.options("/.well-known/oauth-protected-resource")
 @app.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
     base_url = APP_URL
-    return JSONResponse({
-        "resource": base_url,
-        "authorization_servers": [base_url],
-        "bearer_methods_supported": ["Authorization"],
-        "scopes_supported": ["read", "write", "contribute"],
-        "resource_documentation": f"{base_url}/"
-    })
+    return JSONResponse(
+        content={
+            "resource": base_url,
+            "authorization_servers": [base_url],
+            "bearer_methods_supported": ["Authorization"],
+            "scopes_supported": ["read", "write", "contribute"],
+            "resource_documentation": f"{base_url}/"
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Cache-Control": "no-cache, no-store",
+        }
+    )
 
 # ─── OAUTH DYNAMIC CLIENT REGISTRATION ───
 @app.post("/oauth/register")
