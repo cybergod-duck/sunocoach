@@ -238,8 +238,7 @@ async def run_mcp_smoke(base_url: str, timeout: float = 10.0) -> List[Dict[str, 
             headers_lower = {k.lower(): v for k, v in r.headers.items()}
             www = headers_lower.get("www-authenticate", "")
             assert www, "no WWW-Authenticate header"
-            assert 'scope="read write contribute"' in www, f"header={www[:200]}"
-            assert "authorization_server" in www
+            assert "resource_metadata" in www, f"expected resource_metadata in header: {www[:200]}"
             assert "https://" in www, "URL not absolute"
             assert "text/event-stream" not in r.headers.get("content-type", ""), \
                 "401 must not be SSE"

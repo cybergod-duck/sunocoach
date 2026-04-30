@@ -326,7 +326,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         return JSONResponse(
             status_code=401,
             headers={
-                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{APP_URL}/.well-known/oauth-authorization-server", scope="read write contribute"'
+                "WWW-Authenticate": f'Bearer realm="sunocoach", resource_metadata="{APP_URL}/.well-known/oauth-protected-resource"'
             },
             content={
                 "jsonrpc": "2.0",
@@ -344,7 +344,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         return JSONResponse(
             status_code=401,
             headers={
-                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{APP_URL}/.well-known/oauth-authorization-server", scope="read write contribute"'
+                "WWW-Authenticate": f'Bearer realm="sunocoach", resource_metadata="{APP_URL}/.well-known/oauth-protected-resource"'
             },
             content={
                 "jsonrpc": "2.0",
