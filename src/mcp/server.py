@@ -230,10 +230,12 @@ async def root():
         ],
         "endpoints": {
             "health": "/health",
+            "mcp_streamable_http": "/mcp",
             "oauth_discovery": "/.well-known/oauth-authorization-server",
-            "mcp_tools": "/mcp/*",
             "billing": "/billing/*"
-        }
+        },
+        "transport": "streamable-http",
+        "mcp_endpoint": "/mcp"
     }
 
 # ─── MCP JSON-RPC ENDPOINT (POST /) ───
