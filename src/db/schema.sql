@@ -122,6 +122,39 @@ CREATE TABLE IF NOT EXISTS workflow_votes (
     UNIQUE(pattern_id, user_id)
 );
 
+-- OAuth authorization codes (persisted to survive Render cold starts)
+CREATE TABLE IF NOT EXISTS oauth_codes (
+    code TEXT PRIMARY KEY,
+    redirect_uri TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'read',
+    state TEXT DEFAULT '',
+    code_challenge TEXT,
+    code_challenge_method TEXT,
+    created_at DOUBLE PRECISION NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT false,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- OAuth access & refresh tokens (persisted to survive Render cold starts)
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL,
+    expires_at DOUBLE PRECISION NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'read',
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- OAuth dynamically registered clients (persisted to survive Render cold starts)
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id TEXT PRIMARY KEY,
+    client_secret TEXT NOT NULL,
+    client_name TEXT DEFAULT 'Claude',
+    redirect_uris JSONB DEFAULT '[]',
+    created_at DOUBLE PRECISION NOT NULL
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -133,6 +166,9 @@ CREATE INDEX IF NOT EXISTS idx_client_profiles_user_id ON client_profiles(user_i
 CREATE INDEX IF NOT EXISTS idx_workflow_patterns_status ON workflow_patterns(status);
 CREATE INDEX IF NOT EXISTS idx_drift_events_detected_at ON drift_events(detected_at);
 CREATE INDEX IF NOT EXISTS idx_session_usage_user_month ON session_usage(user_id, month_year);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user_id ON oauth_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expires_at ON oauth_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_oauth_codes_user_id ON oauth_codes(user_id);
 
 -- Trigger to update updated_at on users
 CREATE OR REPLACE FUNCTION update_updated_at_column()

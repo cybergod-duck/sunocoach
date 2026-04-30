@@ -12,7 +12,7 @@ from mcp.tools import (
     submit_workflow, vote_on_pattern, get_pattern_status
 )
 from auth.oauth import (
-    CLIENT_ID, create_authorization_url, exchange_code_for_token,
+    CLIENT_ID, APP_URL, create_authorization_url, exchange_code_for_token,
     refresh_access_token, validate_token, get_oauth_discovery,
     register_client, login_user
 )
@@ -240,6 +240,23 @@ TOOL_DISPATCH = {
 }
 
 
+# ─── STARTUP VALIDATION: assert every tool in MCP_TOOLS has a TOOL_DISPATCH entry ───
+_defined_tool_names = {t["name"] for t in MCP_TOOLS}
+_dispatched_tool_names = set(TOOL_DISPATCH.keys())
+_missing_from_dispatch = _defined_tool_names - _dispatched_tool_names
+_extra_in_dispatch = _dispatched_tool_names - _defined_tool_names
+
+if _missing_from_dispatch:
+    raise RuntimeError(
+        f"STARTUP VALIDATION FAILED — tools defined in MCP_TOOLS but MISSING from TOOL_DISPATCH: {_missing_from_dispatch}"
+    )
+if _extra_in_dispatch:
+    print(f"STARTUP WARNING — TOOL_DISPATCH has tools not in MCP_TOOLS: {_extra_in_dispatch}")
+
+print(f"STARTUP VALIDATION PASSED — {len(MCP_TOOLS)} tools fully wired in TOOL_DISPATCH")
+# ─── END STARTUP VALIDATION ───
+
+
 # ─── SSE WRAPPER (MCP Streamable HTTP transport) ───
 def sse_response(data: dict, status_code: int = 200, headers: Optional[dict] = None) -> StreamingResponse:
     """Wrap JSON payload in SSE format for MCP Streamable HTTP."""
@@ -308,7 +325,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         return JSONResponse(
             status_code=401,
             headers={
-                "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
+                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{APP_URL}/.well-known/oauth-authorization-server", scope="read write contribute"'
             },
             content={
                 "jsonrpc": "2.0",
@@ -318,13 +335,15 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         )
 
     try:
+        # Token validation with debug logging (logs token hash + lookup result)
+        print(f"[auth-gate] validating Bearer token: {auth_header[:40]}...")
         await validate_token(request)
-    except HTTPException:
-        print(f"RESPONSE [401-invalid-token]: invalid or expired token")
+    except HTTPException as e:
+        print(f"RESPONSE [401-invalid-token]: {e.detail}")
         return JSONResponse(
             status_code=401,
             headers={
-                "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
+                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{APP_URL}/.well-known/oauth-authorization-server", scope="read write contribute"'
             },
             content={
                 "jsonrpc": "2.0",
@@ -621,10 +640,13 @@ async def oauth_discovery():
 # ─── OAUTH PROTECTED RESOURCE ───
 @app.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
-    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
+    base_url = APP_URL
     return JSONResponse({
         "resource": base_url,
-        "authorization_servers": [base_url]
+        "authorization_servers": [base_url],
+        "bearer_methods_supported": ["Authorization"],
+        "scopes_supported": ["read", "write", "contribute"],
+        "resource_documentation": f"{base_url}/"
     })
 
 # ─── OAUTH DYNAMIC CLIENT REGISTRATION ───
@@ -699,7 +721,7 @@ async def oauth_authorize(
   <div class="card">
     <h2>🔐 SunoCoach</h2>
     <p class="sub">Sign in to authorize Claude Desktop</p>
-    <form method="POST" action="/oauth/login">
+    <form method="POST" action="{APP_URL}/oauth/login">
       <input type="hidden" name="state" value="{safe_state}" />
       <input type="hidden" name="redirect_uri" value="{safe_redirect}" />
       <input type="hidden" name="client_id" value="{safe_client}" />
@@ -755,13 +777,13 @@ async def oauth_login(request: Request):
         )
         return RedirectResponse(url=result["redirect_url"], status_code=302)
     except HTTPException:
-        import html
-        safe_redirect = html.escape(redirect_uri)
-        safe_state = html.escape(state)
-        safe_scope = html.escape(scope)
+        import html as _html
+        safe_redirect = _html.escape(redirect_uri)
+        safe_state = _html.escape(state)
+        safe_scope = _html.escape(scope)
         error_msg = "Invalid+email+or+password"
         return RedirectResponse(
-            url=f"/oauth/authorize?response_type=code&client_id={CLIENT_ID}&redirect_uri={safe_redirect}&scope={safe_scope}&state={safe_state}&error={error_msg}",
+            url=f"{APP_URL}/oauth/authorize?response_type=code&client_id={CLIENT_ID}&redirect_uri={safe_redirect}&scope={safe_scope}&state={safe_state}&error={error_msg}",
             status_code=302
         )
 
