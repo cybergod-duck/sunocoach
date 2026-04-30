@@ -332,13 +332,31 @@ async def mcp_discovery():
 # ─── HEALTH ENDPOINT ───
 @app.get("/health")
 async def health():
-    pattern = await get_pattern_status()
-    return {
-        "status": "ok",
-        "version": "1.0.0",
-        "pattern_status": pattern.get("system_status", "unknown"),
-        "active_pattern": pattern.get("active_pattern", {}).get("name")
+    import traceback
+    diagnostics = {
+        "database_url_set": bool(os.environ.get("DATABASE_URL")),
+        "app_url": os.environ.get("APP_URL", "not_set")
     }
+    try:
+        pattern = await get_pattern_status()
+        return {
+            "status": "ok",
+            "version": "1.0.0",
+            "pattern_status": pattern.get("system_status", "unknown"),
+            "active_pattern": pattern.get("active_pattern", {}).get("name"),
+            "diagnostics": diagnostics
+        }
+    except Exception as e:
+        diagnostics["error"] = str(e)
+        diagnostics["traceback"] = traceback.format_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e),
+                "diagnostics": diagnostics
+            }
+        )
 
 # ─── OAUTH DISCOVERY ───
 @app.get("/.well-known/oauth-authorization-server")
