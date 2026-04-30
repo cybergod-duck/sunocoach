@@ -1,0 +1,9 @@
+name: SunoCoach
+description: >
+  Real-time AI music creation coach inside Claude.
+  Community-validated workflows for Suno and any AI
+  music generator. Style prompt engineering, lyric
+  structure tagging, client profile management,
+  and self-updating pattern detection.
+categories: [music, creativity, productivity]
+url: https://sunocoach.j0b3.workers.dev

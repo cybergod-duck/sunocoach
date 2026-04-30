@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/sunocoach
+      - REDIS_URL=redis://redis:6379/0
+      - APP_URL=http://localhost:8000
+      - OAUTH_CLIENT_ID=sunocoach-claude
+      - OAUTH_CLIENT_SECRET=dev-secret-change-me
+      - STRIPE_SECRET_KEY=sk_test_change_me
+      - STRIPE_WEBHOOK_SECRET=whsec_change_me
+      - STRIPE_PRICE_ID_PRO=price_change_me
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=sunocoach
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./src/db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

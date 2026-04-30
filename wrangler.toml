@@ -1,0 +1,22 @@
+name = "sunocoach"
+main = "src/main.py"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["python_workers"]
+
+# Environment variables (set via wrangler secret put)
+[vars]
+APP_URL = "https://sunocoach.j0b3.workers.dev"
+OAUTH_CLIENT_ID = "sunocoach-claude"
+
+# KV namespace for session cache
+[[kv_namespaces]]
+binding = "SESSION_CACHE"
+id = "6d87d1dcdfef427e8c550c954653f972"
+
+# Secrets (set via wrangler secret put):
+# DATABASE_URL
+# STRIPE_SECRET_KEY
+# STRIPE_WEBHOOK_SECRET
+# STRIPE_PRICE_ID_PRO
+# OAUTH_CLIENT_SECRET
+# REDIS_URL (Upstash)
