@@ -13,7 +13,7 @@ from mcp.tools import (
 )
 from auth.oauth import (
     create_authorization_url, exchange_code_for_token, refresh_access_token,
-    validate_token, get_oauth_discovery
+    validate_token, get_oauth_discovery, register_client
 )
 from billing.stripe_handler import (
     create_checkout_session, handle_webhook, get_subscription_status
@@ -58,9 +58,26 @@ async def mcp_endpoint(request: Request):
     
     POST /mcp → JSON-RPC messages (initialize, tools/list, tools/call)
     GET /mcp  → MCP manifest (same as GET /)
+    
+    Bearer token validation: Claude sends Authorization: Bearer <token> header.
     """
     if request.method == "GET":
         return await root()
+    
+    # Validate Bearer token for POST requests (Claude OAuth)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            await validate_token(request)
+        except HTTPException:
+            # Token invalid — return JSON-RPC error
+            body = await request.json()
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
+            }, status_code=401)
+    
     # For POST, delegate to the JSON-RPC handler
     return await mcp_rpc(request)
 
@@ -398,18 +415,34 @@ async def oauth_protected_resource():
         "authorization_servers": [base_url]
     })
 
-# ─── OAUTH AUTHORIZE ───
+# ─── OAUTH DYNAMIC CLIENT REGISTRATION ───
+@app.post("/oauth/register")
+async def oauth_register(request: Request):
+    """Dynamic Client Registration (OAuth 2.1) for Claude."""
+    body = await request.json()
+    result = await register_client(body)
+    return JSONResponse(result)
+
+# ─── OAUTH AUTHORIZE (with PKCE support) ───
 @app.get("/oauth/authorize")
-async def oauth_authorize(response_type: str, client_id: str, redirect_uri: str, scope: str = "read", state: str = ""):
+async def oauth_authorize(
+    response_type: str,
+    client_id: str,
+    redirect_uri: str,
+    scope: str = "read",
+    state: str = "",
+    code_challenge: Optional[str] = None,
+    code_challenge_method: Optional[str] = None
+):
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
-    result = await create_authorization_url(redirect_uri, scope, state)
+    result = await create_authorization_url(redirect_uri, scope, state, code_challenge, code_challenge_method)
     return JSONResponse({
         "authorization_url": result["authorization_url"],
         "login_url": f"/oauth/login?redirect_uri={redirect_uri}&scope={scope}&state={state}"
     })
 
-# ─── OAUTH TOKEN ───
+# ─── OAUTH TOKEN (with PKCE verification) ───
 @app.post("/oauth/token")
 async def oauth_token(request: Request):
     body = await request.json()
@@ -420,7 +453,8 @@ async def oauth_token(request: Request):
             body.get("code"),
             body.get("client_id"),
             body.get("client_secret"),
-            body.get("redirect_uri")
+            body.get("redirect_uri"),
+            body.get("code_verifier")  # PKCE verifier
         )
     elif grant_type == "refresh_token":
         return await refresh_access_token(body.get("refresh_token"))

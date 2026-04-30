@@ -6,13 +6,20 @@ from typing import Dict, Any, Optional
 from fastapi import Request, HTTPException
 from db.client import fetchrow, execute
 
-# In-memory token store (replace with Redis/Upstash in production)
+# In-memory stores (replace with Redis/Upstash in production)
 _token_store: Dict[str, Dict[str, Any]] = {}
 _auth_codes: Dict[str, Dict[str, Any]] = {}
+_registered_clients: Dict[str, Dict[str, Any]] = {}  # Dynamic client registration
 
 CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "sunocoach-claude")
 CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET", "")
 TOKEN_EXPIRY = 3600  # 1 hour
+
+# Claude's allowed redirect URIs
+ALLOWED_REDIRECT_URIS = [
+    "https://claude.ai/oauth/callback",
+    "https://claude.ai/api/mcp/auth_callback"
+]
 
 
 def _hash_token(token: str) -> str:
@@ -27,13 +34,32 @@ def _generate_code() -> str:
     return secrets.token_urlsafe(24)
 
 
-async def create_authorization_url(redirect_uri: str, scope: str = "read", state: str = "") -> Dict[str, str]:
-    """Generate OAuth authorization URL."""
+def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
+    """Verify PKCE S256 challenge."""
+    computed = hashlib.sha256(code_verifier.encode()).digest()
+    computed_b64 = secrets.token_urlsafe(len(computed))[:43]  # Base64url without padding
+    import base64
+    computed_b64 = base64.urlsafe_b64encode(computed).decode().rstrip('=')
+    return computed_b64 == code_challenge
+
+
+async def create_authorization_url(redirect_uri: str, scope: str = "read", state: str = "", code_challenge: Optional[str] = None, code_challenge_method: Optional[str] = None) -> Dict[str, str]:
+    """Generate OAuth authorization URL with PKCE support."""
+    # Validate redirect URI
+    if redirect_uri not in ALLOWED_REDIRECT_URIS:
+        raise HTTPException(status_code=400, detail=f"Redirect URI not whitelisted: {redirect_uri}")
+    
+    # Validate PKCE (required for Claude)
+    if code_challenge_method and code_challenge_method != "S256":
+        raise HTTPException(status_code=400, detail="Only S256 code_challenge_method is supported")
+    
     code = _generate_code()
     _auth_codes[code] = {
         "redirect_uri": redirect_uri,
         "scope": scope,
         "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
         "created_at": time.time(),
         "used": False
     }
@@ -45,9 +71,14 @@ async def create_authorization_url(redirect_uri: str, scope: str = "read", state
     }
 
 
-async def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str) -> Dict[str, Any]:
-    """Exchange authorization code for access token."""
-    if client_id != CLIENT_ID or client_secret != CLIENT_SECRET:
+async def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str, code_verifier: Optional[str] = None) -> Dict[str, Any]:
+    """Exchange authorization code for access token with PKCE verification."""
+    # Check if client is dynamically registered
+    client = _registered_clients.get(client_id)
+    if client:
+        if client["client_secret"] != client_secret:
+            raise HTTPException(status_code=401, detail="Invalid client credentials")
+    elif client_id != CLIENT_ID or client_secret != CLIENT_SECRET:
         raise HTTPException(status_code=401, detail="Invalid client credentials")
 
     auth_data = _auth_codes.get(code)
@@ -62,6 +93,13 @@ async def exchange_code_for_token(code: str, client_id: str, client_secret: str,
 
     if time.time() - auth_data["created_at"] > 600:  # 10 min expiry
         raise HTTPException(status_code=400, detail="Authorization code expired")
+
+    # Verify PKCE if code_challenge was provided
+    if auth_data.get("code_challenge"):
+        if not code_verifier:
+            raise HTTPException(status_code=400, detail="code_verifier required for PKCE")
+        if not _verify_pkce(code_verifier, auth_data["code_challenge"]):
+            raise HTTPException(status_code=400, detail="Invalid code_verifier")
 
     auth_data["used"] = True
 
@@ -148,15 +186,38 @@ async def validate_token(request: Request) -> Dict[str, Any]:
     return token_data
 
 
+async def register_client(client_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Dynamic Client Registration (OAuth 2.1) for Claude."""
+    client_id = f"claude-{secrets.token_urlsafe(16)}"
+    client_secret = secrets.token_urlsafe(32)
+    
+    _registered_clients[client_id] = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "client_name": client_metadata.get("client_name", "Claude"),
+        "redirect_uris": client_metadata.get("redirect_uris", ALLOWED_REDIRECT_URIS),
+        "created_at": time.time()
+    }
+    
+    return {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "client_id_issued_at": int(time.time()),
+        "client_secret_expires_at": 0  # Never expires
+    }
+
+
 async def get_oauth_discovery() -> Dict[str, Any]:
-    """OAuth 2.0 discovery endpoint."""
+    """OAuth 2.1 discovery endpoint with PKCE support."""
     base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
     return {
         "issuer": base_url,
         "authorization_endpoint": f"{base_url}/oauth/authorize",
         "token_endpoint": f"{base_url}/oauth/token",
+        "registration_endpoint": f"{base_url}/oauth/register",
         "token_endpoint_auth_methods_supported": ["client_secret_post"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "scopes_supported": ["read", "write", "contribute"],
-        "response_types_supported": ["code"]
+        "response_types_supported": ["code"],
+        "code_challenge_methods_supported": ["S256"]
     }
