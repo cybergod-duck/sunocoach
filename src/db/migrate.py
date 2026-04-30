@@ -31,6 +31,7 @@ async def run_migrations() -> None:
         await _v1_core_tables(conn)
         await _v2_oauth_tables(conn)
         await _v3_trigger(conn)
+        await _v4_seed_static_client(conn)
         log.info("[migrate] All migrations complete ✅")
 
 
@@ -345,3 +346,43 @@ async def _v3_trigger(conn) -> None:
         log.info("[migrate/v3] Trigger already exists, skipping.")
 
     log.info("[migrate/v3] Trigger OK ✅")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# v4: Seed static OAuth client for Claude connector
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _v4_seed_static_client(conn) -> None:
+    """
+    Upsert the static OAuth client that Claude uses for the connector.
+    Reads credentials from env vars:
+        STATIC_OAUTH_CLIENT_ID      (default: sunocoach-claude)
+        STATIC_OAUTH_CLIENT_SECRET  (required — set in Render env vars)
+    """
+    import os, time, json
+    log.info("[migrate/v4] Seeding static OAuth client …")
+
+    client_id = os.environ.get("STATIC_OAUTH_CLIENT_ID", "sunocoach-claude")
+    client_secret = os.environ.get("STATIC_OAUTH_CLIENT_SECRET", "")
+
+    if not client_secret:
+        log.warning("[migrate/v4] STATIC_OAUTH_CLIENT_SECRET not set — skipping client seed.")
+        return
+
+    redirect_uris = json.dumps([
+        "https://claude.ai/oauth/callback",
+        "https://claude.ai/api/mcp/auth_callback",
+    ])
+
+    await conn.execute(
+        """
+        INSERT INTO oauth_clients (client_id, client_secret, client_name, redirect_uris, created_at)
+        VALUES ($1, $2, 'Claude Static Client', $3::jsonb, $4)
+        ON CONFLICT (client_id) DO UPDATE
+            SET client_secret = EXCLUDED.client_secret,
+                client_name   = EXCLUDED.client_name,
+                redirect_uris = EXCLUDED.redirect_uris
+        """,
+        client_id, client_secret, redirect_uris, time.time(),
+    )
+    log.info(f"[migrate/v4] Static client '{client_id}' upserted ✅")
