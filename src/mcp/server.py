@@ -256,37 +256,25 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
     base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
 
     if not auth_header.startswith("Bearer "):
-        data = {
-            "jsonrpc": "2.0",
-            "id": body.get("id"),
-            "error": {
-                "code": -32001,
-                "message": "Unauthorized. Use OAuth 2.1 with PKCE to authenticate.",
-                "authorization_url": f"{base_url}/oauth/authorize"
-            }
-        }
-        print(f"RESPONSE [401-challenge]: {json.dumps(data)}")
+        print(f"RESPONSE [401-challenge]: no Bearer token")
         return JSONResponse(
-            data,
             status_code=401,
             headers={
-                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{base_url}/.well-known/oauth-authorization-server"'
-            }
+                "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
+            },
+            content={"error": "unauthorized"}
         )
 
     try:
         await validate_token(request)
     except HTTPException:
-        data = {
-            "jsonrpc": "2.0",
-            "id": body.get("id"),
-            "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
-        }
-        print(f"RESPONSE [401-invalid-token]: {json.dumps(data)}")
+        print(f"RESPONSE [401-invalid-token]: invalid or expired token")
         return JSONResponse(
-            data,
             status_code=401,
-            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
+            headers={
+                "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
+            },
+            content={"error": "unauthorized"}
         )
 
     # ─── JSON-RPC 2.0 Method Dispatch ───
@@ -299,7 +287,7 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": "2025-11-25",
                 "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
                 "capabilities": {"tools": {}}
             }
