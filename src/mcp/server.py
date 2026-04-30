@@ -326,12 +326,17 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         return JSONResponse(
             status_code=401,
             headers={
-                "WWW-Authenticate": f'Bearer realm="sunocoach", resource_metadata="{APP_URL}/.well-known/oauth-protected-resource"'
+                "WWW-Authenticate": (
+                    f'Bearer realm="sunocoach"'
+                    f', resource_metadata="{APP_URL}/.well-known/oauth-protected-resource"'
+                    f', error="insufficient_scope"'
+                    f', scope="read write contribute"'
+                )
             },
             content={
                 "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32001, "message": "Unauthorized"}
+                "id": req_id,
+                "error": {"code": -32001, "message": "Unauthorized — Bearer token required"}
             }
         )
 
@@ -344,12 +349,17 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         return JSONResponse(
             status_code=401,
             headers={
-                "WWW-Authenticate": f'Bearer realm="sunocoach", resource_metadata="{APP_URL}/.well-known/oauth-protected-resource"'
+                "WWW-Authenticate": (
+                    f'Bearer realm="sunocoach"'
+                    f', resource_metadata="{APP_URL}/.well-known/oauth-protected-resource"'
+                    f', error="invalid_token"'
+                    f', scope="read write contribute"'
+                )
             },
             content={
                 "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32001, "message": "Unauthorized"}
+                "id": req_id,
+                "error": {"code": -32001, "message": "Unauthorized — invalid or expired token"}
             }
         )
 
