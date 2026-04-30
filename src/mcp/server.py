@@ -38,6 +38,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─── ROOT ───
+@app.get("/")
+async def root():
+    return {
+        "name": "SunoCoach MCP Server",
+        "version": "1.0.0",
+        "status": "running",
+        "endpoints": {
+            "health": "/health",
+            "oauth_discovery": "/.well-known/oauth-authorization-server",
+            "mcp_tools": "/mcp/*",
+            "billing": "/billing/*"
+        }
+    }
+
 # ─── HEALTH ENDPOINT ───
 @app.get("/health")
 async def health():

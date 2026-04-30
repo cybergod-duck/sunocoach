@@ -1,7 +1,7 @@
 {
   "name": "sunocoach",
   "description": "AI music creation workflow coach with community-validated patterns, style prompt engineering, and lyric structure tools.",
-  "url": "https://sunocoach.j0b3.workers.dev",
+  "url": "https://sunocoach.onrender.com",
   "categories": ["music", "creativity", "audio"],
   "auth": "oauth2",
   "tools": [

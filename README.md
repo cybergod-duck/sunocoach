@@ -16,7 +16,7 @@ AI music creation workflow coach that lives inside Claude. Community-validated p
 Go to **claude.ai → Settings → Connectors → Add Custom Connector** → paste your deployed URL:
 
 ```
-https://YOUR_APP_URL
+https://sunocoach.onrender.com
 ```
 
 OAuth handles auth automatically — no API keys to copy-paste.
@@ -29,7 +29,7 @@ OAuth handles auth automatically — no API keys to copy-paste.
 | **Contributor** | $0 | Unlimited | Submit + vote on workflow patterns (email verify only) |
 | **Pro** | $9/mo | Unlimited | Client profiles, priority patterns, email support |
 
-[Upgrade to Pro](https://YOUR_APP_URL/billing/checkout)
+[Upgrade to Pro](https://sunocoach.onrender.com/billing/checkout)
 
 ## Development
 
