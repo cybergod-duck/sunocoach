@@ -246,7 +246,7 @@ async def mcp_rpc(request: Request):
 
     # Tool dispatch table
     tools = {
-        "get_current_workflow": get_current_workflow,
+        "get_current_workflow": lambda: get_current_workflow(),
         "get_next_step": lambda: get_next_step(params.get("session_id")),
         "log_step_result": lambda: log_step_result(
             params.get("session_id"),
@@ -302,7 +302,7 @@ async def mcp_rpc(request: Request):
             params.get("rating"),
             params.get("session_evidence")
         ),
-        "get_pattern_status": get_pattern_status,
+        "get_pattern_status": lambda: get_pattern_status(),
     }
 
     if method == "initialize":
