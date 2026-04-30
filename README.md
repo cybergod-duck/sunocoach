@@ -88,6 +88,56 @@ fly launch --dockerfile Dockerfile
 fly secrets set DATABASE_URL=... STRIPE_SECRET_KEY=...
 ```
 
+## Debugging MCP on Render
+
+The server exposes a live debug dashboard at [`/debug/mcp`](http://localhost:8000/debug/mcp) that runs the full MCP + OAuth end-to-end smoke check against the live instance.
+
+### Usage
+
+Open in any browser:
+
+```
+https://sunocoach.onrender.com/debug/mcp
+```
+
+The page renders a dark-themed HTML dashboard with:
+
+- **Summary boxes** — Passed / Failed / Duration
+- **Check table** — 11 steps with ✅/❌ status icons and detail messages
+
+### What the 11 checks cover
+
+| # | Check | What it validates |
+|---|-------|-------------------|
+| 1 | OAuth Discovery | `/.well-known/oauth-authorization-server` returns issuer, endpoints, scopes_supported, S256 support |
+| 2 | Protected Resource | `/.well-known/oauth-protected-resource` has resource, authorization_servers, bearer_methods, scopes, documentation |
+| 3 | Client Registration | `POST /oauth/register` returns `client_id` and `client_secret` |
+| 4 | Authorize HTML Page | `GET /oauth/authorize` renders a login form with absolute URL action |
+| 5 | User Login → Auth Code | `POST /oauth/login` with credentials returns a 302 redirect with `code` and `state` params |
+| 6 | Token Exchange | `POST /oauth/token` exchanges the auth code for a Bearer access token + refresh token |
+| 7 | tools/list (authenticated) | `POST /mcp` with Bearer token returns an SSE response with the tools array |
+| 8 | tools/call (authenticated) | `POST /mcp` calls `get_pattern_status` and returns SSE content |
+| 9 | 401 without token | `POST /mcp` without auth returns 401 with proper `WWW-Authenticate` header |
+| 10 | MCP initialize (no auth) | `POST /mcp` `initialize` returns SSE with `protocolVersion: "2025-11-25"` |
+| 11 | notifications/initialized | `POST /mcp` `notifications/initialized` returns 204 No Content |
+
+### Timeout behavior
+
+Each check has a **10-second total budget**. If a step exceeds its remaining share, it's marked as ❌ with `"timeout"` detail and execution continues to the next step.
+
+### ⚠️ Warning
+
+> **Do not expose `/debug/mcp` publicly in production.** This endpoint runs live OAuth token exchange and MCP tool calls against the actual database. It should be disabled or auth-protected before going to production.
+
+### Running locally
+
+```bash
+cd sunocoach
+python test_oauth_mcp_smoke.py
+```
+
+This calls the same [`run_mcp_smoke()`](sunocoach/debug/mcp_smoke.py) function used by the dashboard, but with a 30-second timeout for local debugging.
+
 ## Environment Variables
 
 | Variable | Description |

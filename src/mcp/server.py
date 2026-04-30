@@ -603,6 +603,131 @@ async def mcp_root_handler(request: Request):
     return await _dispatch_jsonrpc(request, body, log_label="MCP ROOT")
 
 
+# ─── DEBUG: MCP + OAuth Live Dashboard ───
+@app.get("/debug/mcp")
+async def debug_mcp_dashboard():
+    """
+    Live MCP + OAuth end-to-end smoke check dashboard.
+
+    Runs all 11 smoke test steps against the live server and renders
+    a dark-themed HTML page with pass/fail indicators.
+
+    NOTE: This is a development/debugging tool. Do not expose publicly
+    in production without adding auth.
+    """
+    from debug.mcp_smoke import run_mcp_smoke
+    import time
+
+    start = time.time()
+    checks = await run_mcp_smoke(APP_URL, timeout=10.0)
+    elapsed = time.time() - start
+
+    total = len(checks)
+    passed = sum(1 for c in checks if c["ok"])
+    failed = total - passed
+
+    rows_html = ""
+    for c in checks:
+        icon = "✅" if c["ok"] else "❌"
+        color = "#4ade80" if c["ok"] else "#ff6b6b"
+        detail = c.get("detail", "")
+        # Escape HTML in detail
+        detail = detail.replace("&", "&").replace("<", "<").replace(">", ">")
+        rows_html += f"""
+        <tr>
+            <td style="font-size:20px;text-align:center;padding:8px 12px;">{icon}</td>
+            <td style="padding:8px 12px;color:#e0d6ff;font-weight:500;">{c['name']}</td>
+            <td style="padding:8px 12px;color:{color};font-size:13px;word-break:break-word;">{detail}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SunoCoach — MCP Debug Dashboard</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      min-height: 100vh; padding: 40px 20px;
+      color: #c8c0e0;
+    }}
+    .container {{ max-width: 900px; margin: 0 auto; }}
+    h1 {{ color: #e0d6ff; font-size: 26px; margin-bottom: 6px; }}
+    .warning {{
+      background: #3a2a00; border: 1px solid #665500; border-radius: 8px;
+      padding: 12px 16px; margin: 16px 0; color: #ffcc66; font-size: 13px;
+    }}
+    .summary {{
+      display: flex; gap: 16px; margin: 20px 0;
+    }}
+    .summary-box {{
+      flex: 1; border-radius: 12px; padding: 20px; text-align: center;
+    }}
+    .summary-box.pass {{ background: #0a2e1a; border: 1px solid #1a6b3a; }}
+    .summary-box.fail {{ background: #2e0a0a; border: 1px solid #6b1a1a; }}
+    .summary-box .num {{ font-size: 36px; font-weight: 700; }}
+    .summary-box .num.green {{ color: #4ade80; }}
+    .summary-box .num.red {{ color: #ff6b6b; }}
+    .summary-box .label {{ font-size: 13px; color: #888; margin-top: 4px; }}
+    table {{
+      width: 100%; border-collapse: collapse; background: #1a1a2e;
+      border-radius: 12px; overflow: hidden; margin-top: 16px;
+    }}
+    th {{
+      text-align: left; padding: 12px; background: #12122a;
+      color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    }}
+    td {{ border-bottom: 1px solid #2a2a4a; }}
+    tr:last-child td {{ border-bottom: none; }}
+    .footer {{ margin-top: 20px; font-size: 12px; color: #555; text-align: center; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔬 MCP + OAuth Debug Dashboard</h1>
+    <p style="color:#888;font-size:14px;">Live end-to-end check against <code style="color:#7c5cfc;">{APP_URL}</code></p>
+
+    <div class="warning">
+      ⚠️ <strong>Development/debugging tool only.</strong> Do not expose this publicly in production without adding authentication.
+      This endpoint runs live OAuth token exchange and MCP tool calls against the actual database.
+    </div>
+
+    <div class="summary">
+      <div class="summary-box pass">
+        <div class="num green">{passed}</div>
+        <div class="label">Passed</div>
+      </div>
+      <div class="summary-box fail">
+        <div class="num red">{failed}</div>
+        <div class="label">Failed</div>
+      </div>
+      <div class="summary-box" style="background:#1a1a2e;border:1px solid #3a3560;">
+        <div class="num" style="color:#e0d6ff;">{elapsed:.1f}s</div>
+        <div class="label">Duration</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th style="width:40px;">&nbsp;</th><th>Check</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      Ran {total} checks in {elapsed:.1f}s &mdash; SunoCoach v1.0.0
+    </div>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
 # ─── HEALTH ENDPOINT ───
 @app.get("/health")
 async def health():
