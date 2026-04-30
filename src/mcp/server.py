@@ -48,6 +48,22 @@ app.add_middleware(
     max_age=86400,
 )
 
+# ─── /mcp ALIAS (Claude Streamable HTTP compatibility) ───
+# Claude requires POST /mcp for Streamable HTTP MCP transport.
+# This aliases /mcp to the working JSON-RPC handlers at POST / and GET /.
+@app.post("/mcp")
+@app.get("/mcp")
+async def mcp_endpoint(request: Request):
+    """Handle MCP requests at /mcp for Claude compatibility.
+    
+    POST /mcp → JSON-RPC messages (initialize, tools/list, tools/call)
+    GET /mcp  → MCP manifest (same as GET /)
+    """
+    if request.method == "GET":
+        return await root()
+    # For POST, delegate to the JSON-RPC handler
+    return await mcp_rpc(request)
+
 # ─── MCP MANIFEST (root) ───
 @app.get("/")
 async def root():
