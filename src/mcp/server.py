@@ -29,22 +29,181 @@ from db.client import close_pool
 
 app = FastAPI(title="SunoCoach MCP Server")
 
-# CORS for Claude connector
+# CORS for Claude connector — allow all origins so Claude servers can reach us
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://claude.ai", "https://www.claude.ai"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=86400,
 )
 
-# ─── ROOT ───
+# ─── MCP MANIFEST (root) ───
 @app.get("/")
 async def root():
     return {
-        "name": "SunoCoach MCP Server",
+        "name": "SunoCoach",
         "version": "1.0.0",
-        "status": "running",
+        "description": "AI music creation workflow coach for Suno and any AI music generator. Style prompt engineering, lyric structure tagging, client profile management, and self-updating pattern detection.",
+        "protocol": "mcp",
+        "tools": [
+            {
+                "name": "get_current_workflow",
+                "description": "Returns the active workflow pattern with all steps and drift status.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "get_next_step",
+                "description": "Returns exact instruction for the current step in plain English.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"session_id": {"type": "string"}},
+                    "required": ["session_id"]
+                }
+            },
+            {
+                "name": "log_step_result",
+                "description": "Stores result, advances session state, checks for drift.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "step_number": {"type": "integer"},
+                        "quality_rating": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "notes": {"type": "string"}
+                    },
+                    "required": ["session_id", "step_number", "quality_rating"]
+                }
+            },
+            {
+                "name": "start_session",
+                "description": "Creates a new coaching session.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "string"},
+                        "workflow_id": {"type": "string"}
+                    },
+                    "required": ["user_id"]
+                }
+            },
+            {
+                "name": "generate_style_prompt",
+                "description": "Takes plain English, returns structured style DNA prompt.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"description": {"type": "string"}},
+                    "required": ["description"]
+                }
+            },
+            {
+                "name": "build_lyric_structure",
+                "description": "Applies correct bracket tagging to raw lyrics.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "raw_lyrics": {"type": "string"},
+                        "sections": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["raw_lyrics"]
+                }
+            },
+            {
+                "name": "validate_prompt",
+                "description": "Scores prompt against all rules, returns issues with fixes.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"prompt_text": {"type": "string"}},
+                    "required": ["prompt_text"]
+                }
+            },
+            {
+                "name": "save_style_prompt",
+                "description": "Validates then stores in user's style library.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "prompt_text": {"type": "string"},
+                        "genre_tags": {"type": "array", "items": {"type": "string"}},
+                        "mood_tags": {"type": "array", "items": {"type": "string"}},
+                        "bpm": {"type": "integer"}
+                    },
+                    "required": ["name", "prompt_text"]
+                }
+            },
+            {
+                "name": "recall_style",
+                "description": "Fuzzy search user's style prompt library.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "mood": {"type": "string"},
+                        "genre": {"type": "string"}
+                    }
+                }
+            },
+            {
+                "name": "save_client",
+                "description": "Creates or updates client profile.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "vocal_type": {"type": "string"},
+                        "genres": {"type": "array", "items": {"type": "string"}},
+                        "bpm_range": {"type": "object", "properties": {"min": {"type": "integer"}, "max": {"type": "integer"}}},
+                        "emotional_register": {"type": "string"}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "get_client_brief",
+                "description": "Returns ready-to-paste style prompt + lyric structure from client profile.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "client_name": {"type": "string"},
+                        "concept": {"type": "string"}
+                    },
+                    "required": ["client_name", "concept"]
+                }
+            },
+            {
+                "name": "submit_workflow",
+                "description": "Contributor tier: submits new workflow pattern for community scoring.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "steps": {"type": "array"},
+                        "notes": {"type": "string"},
+                        "session_data": {"type": "array"}
+                    },
+                    "required": ["steps"]
+                }
+            },
+            {
+                "name": "vote_on_pattern",
+                "description": "Contributor tier: vote on submitted pattern.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "pattern_id": {"type": "string"},
+                        "rating": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "session_evidence": {"type": "object"}
+                    },
+                    "required": ["pattern_id", "rating"]
+                }
+            },
+            {
+                "name": "get_pattern_status",
+                "description": "Returns active/drifting/calibrating status + explanation.",
+                "input_schema": {"type": "object", "properties": {}}
+            }
+        ],
         "endpoints": {
             "health": "/health",
             "oauth_discovery": "/.well-known/oauth-authorization-server",
@@ -52,6 +211,11 @@ async def root():
             "billing": "/billing/*"
         }
     }
+
+# ─── MCP DISCOVERY ENDPOINT ───
+@app.get("/mcp")
+async def mcp_discovery():
+    return await root()
 
 # ─── HEALTH ENDPOINT ───
 @app.get("/health")
