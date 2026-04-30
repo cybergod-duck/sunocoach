@@ -29,7 +29,21 @@ from db.client import close_pool
 
 app = FastAPI(title="SunoCoach MCP Server")
 
-# CORS for Claude connector — allow all origins so Claude servers can reach us
+# ─── CATCH-ALL CORS MIDDLEWARE ───
+# FastAPI's CORSMiddleware only adds headers when Origin matches.
+# Claude's MCP connector may not always send Origin, so we inject
+# CORS on EVERY response to be safe.
+@app.middleware("http")
+async def cors_everywhere(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+# Also register the middleware via add_middleware for OPTIONS preflight handling
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
