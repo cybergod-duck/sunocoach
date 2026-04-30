@@ -11,7 +11,8 @@ AI music creation workflow coach that lives inside Claude. Community-validated p
 - **Backend:** FastAPI + Uvicorn (Python 3.11)
 - **Database:** PostgreSQL via asyncpg (Supabase in production)
 - **Cache:** In-memory (Redis optional)
-- **Auth:** OAuth 2.0
+- **Auth:** OAuth 2.1 + PKCE (Claude MCP Connector)
+- **Migrations:** Automatic idempotent startup migrations (no manual SQL needed)
 - **Billing:** Stripe Checkout + Webhooks
 - **Deploy:** Docker → Render/Railway/Fly.io
 
@@ -52,7 +53,30 @@ OAuth handles auth automatically — no API keys to copy-paste.
 
 [Upgrade to Pro](https://sunocoach.onrender.com/billing/checkout)
 
-## Development
+## Database Migrations
+
+Migrations run **automatically on every app startup** — no manual `psql` commands needed.
+
+### How it works
+
+`src/db/migrate.py` contains three idempotent migration groups that are called from FastAPI's `@app.on_event("startup")` hook in `server.py`:
+
+| Version | What it does |
+|---------|-------------|
+| **v1** (core) | `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"` + all core tables (users, workflow_patterns, sessions, etc.) |
+| **v2** (OAuth) | Adds `users.password_hash` if missing; creates `oauth_codes`, `oauth_tokens`, `oauth_clients` tables |
+| **v3** (trigger) | Ensures the `updated_at` auto-update trigger exists on the `users` table |
+
+Every operation uses `IF NOT EXISTS`, `pg_catalog`, or `information_schema` checks, so it is **safe to run multiple times**. If the migration fails at startup, Render marks the deployment as failed (preventing traffic from hitting a broken schema).
+
+### If you need to reset / re-apply from scratch
+
+```bash
+# Run the full schema SQL manually (wipes and recreates everything)
+psql $DATABASE_URL -f src/db/schema.sql
+```
+
+### Development
 
 ```bash
 # Local dev with Docker Compose
@@ -60,6 +84,7 @@ docker-compose up -d
 
 # App runs at http://localhost:8000
 # Health check: http://localhost:8000/health
+# Migrations run automatically on first startup
 ```
 
 ## Deploy
@@ -129,14 +154,22 @@ Each check has a **10-second total budget**. If a step exceeds its remaining sha
 
 > **Do not expose `/debug/mcp` publicly in production.** This endpoint runs live OAuth token exchange and MCP tool calls against the actual database. It should be disabled or auth-protected before going to production.
 
-### Running locally
+### Running the smoke test locally
 
 ```bash
+# From the repo root:
 cd sunocoach
 python test_oauth_mcp_smoke.py
 ```
 
-This calls the same [`run_mcp_smoke()`](sunocoach/debug/mcp_smoke.py) function used by the dashboard, but with a 30-second timeout for local debugging.
+This calls the same [`run_mcp_smoke()`](debug/mcp_smoke.py) function used by the dashboard,
+but targets `http://localhost:8000` with a 30-second timeout. To point it at the live server,
+edit `BASE` at the top of `test_oauth_mcp_smoke.py`:
+
+```python
+# BASE = "http://localhost:8000"
+BASE = "https://sunocoach.onrender.com"  # Uncomment for staging
+```
 
 ## Environment Variables
 

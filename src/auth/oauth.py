@@ -48,14 +48,18 @@ async def create_authorization_url(redirect_uri: str, scope: str = "read", state
     # Validate redirect URI
     if redirect_uri not in ALLOWED_REDIRECT_URIS:
         raise HTTPException(status_code=400, detail=f"Redirect URI not whitelisted: {redirect_uri}")
-    
+
+    # Coerce empty strings to None so the DB stores NULL (not an empty challenge)
+    code_challenge = code_challenge or None
+    code_challenge_method = code_challenge_method or None
+
     # Validate PKCE (required for Claude)
     if code_challenge_method and code_challenge_method != "S256":
         raise HTTPException(status_code=400, detail="Only S256 code_challenge_method is supported")
-    
+
     code = _generate_code()
     now = time.time()
-    
+
     # Store in database (persistent across cold starts)
     await execute(
         """INSERT INTO oauth_codes (code, redirect_uri, scope, state, code_challenge, code_challenge_method, created_at, used)
@@ -74,6 +78,10 @@ async def login_user(email: str, password: str, redirect_uri: str, scope: str, s
     # Validate redirect URI
     if redirect_uri not in ALLOWED_REDIRECT_URIS:
         raise HTTPException(status_code=400, detail=f"Redirect URI not whitelisted: {redirect_uri}")
+
+    # Coerce empty strings to None so the DB stores NULL (not an empty challenge)
+    code_challenge = code_challenge or None
+    code_challenge_method = code_challenge_method or None
 
     if code_challenge_method and code_challenge_method != "S256":
         raise HTTPException(status_code=400, detail="Only S256 code_challenge_method is supported")
@@ -110,6 +118,8 @@ async def login_user(email: str, password: str, redirect_uri: str, scope: str, s
 
 async def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str, code_verifier: Optional[str] = None) -> Dict[str, Any]:
     """Exchange authorization code for access token with PKCE verification."""
+    # Coerce empty string to None so the PKCE check below works correctly
+    code_verifier = code_verifier or None
     # Check if client is dynamically registered
     client_row = await fetchrow("SELECT client_secret, redirect_uris FROM oauth_clients WHERE client_id = $1", client_id)
     

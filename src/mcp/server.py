@@ -21,6 +21,7 @@ from billing.stripe_handler import (
 )
 from drift.detector import check_drift_status
 from db.client import close_pool
+from db.migrate import run_migrations
 
 app = FastAPI(title="SunoCoach MCP Server")
 
@@ -913,9 +914,17 @@ async def oauth_login(request: Request):
         )
 
 # ─── OAUTH TOKEN (with PKCE verification) ───
+# Accepts both application/json (smoke test / curl) and
+# application/x-www-form-urlencoded (Claude OAuth 2.1 RFC 6749 standard).
 @app.post("/oauth/token")
 async def oauth_token(request: Request):
-    body = await request.json()
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        form = await request.form()
+        body = dict(form)
+    else:
+        body = await request.json()
+
     grant_type = body.get("grant_type", "authorization_code")
 
     if grant_type == "authorization_code":
@@ -924,7 +933,7 @@ async def oauth_token(request: Request):
             body.get("client_id"),
             body.get("client_secret"),
             body.get("redirect_uri"),
-            body.get("code_verifier")  # PKCE verifier
+            body.get("code_verifier") or None  # PKCE verifier (empty string → None)
         )
     elif grant_type == "refresh_token":
         return await refresh_access_token(body.get("refresh_token"))
@@ -945,7 +954,25 @@ async def billing_checkout(request: Request):
     return result
 
 
+# ─── STARTUP: run idempotent DB migrations ───
+@app.on_event("startup")
+async def startup():
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    log = logging.getLogger("sunocoach.startup")
+    log.info("[startup] Running DB migrations …")
+    try:
+        await run_migrations()
+        log.info("[startup] DB migrations complete ✅")
+    except Exception as exc:
+        log.error(f"[startup] DB migration FAILED: {exc}")
+        # Re-raise so Render marks the deployment as failed — better than
+        # serving requests against a broken schema.
+        raise
+
+
 # ─── SHUTDOWN ───
 @app.on_event("shutdown")
 async def shutdown():
     await close_pool()
+
