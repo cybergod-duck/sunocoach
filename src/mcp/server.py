@@ -927,18 +927,27 @@ async def oauth_token(request: Request):
 
     grant_type = body.get("grant_type", "authorization_code")
 
-    if grant_type == "authorization_code":
-        return await exchange_code_for_token(
-            body.get("code"),
-            body.get("client_id"),
-            body.get("client_secret"),
-            body.get("redirect_uri"),
-            body.get("code_verifier") or None  # PKCE verifier (empty string → None)
-        )
-    elif grant_type == "refresh_token":
-        return await refresh_access_token(body.get("refresh_token"))
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported grant_type")
+    try:
+        if grant_type == "authorization_code":
+            return await exchange_code_for_token(
+                body.get("code"),
+                body.get("client_id"),
+                body.get("client_secret"),
+                body.get("redirect_uri"),
+                body.get("code_verifier") or None  # PKCE verifier (empty string → None)
+            )
+        elif grant_type == "refresh_token":
+            return await refresh_access_token(body.get("refresh_token"))
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported grant_type")
+    except HTTPException:
+        raise  # Let FastAPI handle known HTTP errors normally
+    except Exception as exc:
+        # Surface the real exception so /debug/mcp shows the actual crash cause
+        import traceback as _tb
+        detail = f"{type(exc).__name__}: {exc}"
+        print(f"[oauth/token] UNCAUGHT EXCEPTION: {detail}\n{_tb.format_exc()}")
+        raise HTTPException(status_code=500, detail=detail)
 
 # ─── STRIPE WEBHOOK ───
 @app.post("/webhooks/stripe")
