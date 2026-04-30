@@ -300,14 +300,20 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         return Response(status_code=204)
 
     # ─── AUTH GATE: everything beyond here requires valid Bearer token ───
+    # CRITICAL: 401 MUST be plain HTTP (not SSE) so Claude can parse
+    # the WWW-Authenticate header and initiate the OAuth flow.
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         print(f"RESPONSE [401-challenge]: no Bearer token")
-        return sse_response(
-            {"error": "unauthorized"},
+        return JSONResponse(
             status_code=401,
             headers={
                 "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
+            },
+            content={
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32001, "message": "Unauthorized"}
             }
         )
 
@@ -315,11 +321,15 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         await validate_token(request)
     except HTTPException:
         print(f"RESPONSE [401-invalid-token]: invalid or expired token")
-        return sse_response(
-            {"error": "unauthorized"},
+        return JSONResponse(
             status_code=401,
             headers={
                 "WWW-Authenticate": 'Bearer realm="sunocoach", authorization_server="https://sunocoach.onrender.com/.well-known/oauth-authorization-server"'
+            },
+            content={
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32001, "message": "Unauthorized"}
             }
         )
 
