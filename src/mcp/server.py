@@ -25,10 +25,28 @@ from db.migrate import run_migrations
 
 app = FastAPI(title="SunoCoach MCP Server")
 
+# ─── REQUEST AUDIT LOGGER — logs every hit so we can trace Claude's OAuth flow ───
+@app.middleware("http")
+async def audit_log(request: Request, call_next):
+    import time as _time
+    start = _time.monotonic()
+    print(
+        f">>> {request.method} {request.url.path}"
+        f" | UA={request.headers.get('user-agent','?')[:60]}"
+        f" | Origin={request.headers.get('origin','none')}"
+        f" | Auth={request.headers.get('authorization','none')[:30]}"
+    )
+    response = await call_next(request)
+    elapsed = (_time.monotonic() - start) * 1000
+    print(
+        f"<<< {request.method} {request.url.path}"
+        f" → {response.status_code}"
+        f" | WWW-Auth={response.headers.get('www-authenticate','none')[:80]}"
+        f" | {elapsed:.0f}ms"
+    )
+    return response
+
 # ─── CATCH-ALL CORS MIDDLEWARE ───
-# FastAPI's CORSMiddleware only adds headers when Origin matches.
-# Claude's MCP connector may not always send Origin, so we inject
-# CORS on EVERY response to be safe.
 @app.middleware("http")
 async def cors_everywhere(request: Request, call_next):
     response = await call_next(request)
