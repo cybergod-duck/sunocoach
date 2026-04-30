@@ -544,117 +544,122 @@ async def root():
         "mcp_endpoint": "/mcp"
     }
 
-# ─── MCP JSON-RPC ENDPOINT (POST /) ───
+# ─── MCP JSON-RPC ENDPOINT (POST /) — same logic as /mcp handler ───
 @app.post("/")
-async def mcp_rpc(request: Request):
+async def mcp_root_handler(request: Request):
+    # ─── INCOMING REQUEST LOG ───
     body = await request.json()
+    headers = dict(request.headers)
+    print(f"=== MCP ROOT HIT ===")
+    print(f"METHOD: {body.get('method')}")
+    print(f"BODY: {json.dumps(body)}")
+    print(f"AUTH: {headers.get('authorization', 'MISSING')}")
+    print(f"ACCEPT: {headers.get('accept', 'MISSING')}")
+
+    # ─── OAuth 2.1: ALL POST requests require valid Bearer token ───
+    auth_header = request.headers.get("Authorization", "")
+    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
+
+    if not auth_header.startswith("Bearer "):
+        data = {
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "error": {
+                "code": -32001,
+                "message": "Unauthorized. Use OAuth 2.1 with PKCE to authenticate.",
+                "authorization_url": f"{base_url}/oauth/authorize"
+            }
+        }
+        print(f"RESPONSE [401-challenge]: {json.dumps(data)}")
+        return JSONResponse(
+            data,
+            status_code=401,
+            headers={
+                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{base_url}/.well-known/oauth-authorization-server"'
+            }
+        )
+
+    try:
+        await validate_token(request)
+    except HTTPException:
+        data = {
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
+        }
+        print(f"RESPONSE [401-invalid-token]: {json.dumps(data)}")
+        return JSONResponse(
+            data,
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
+        )
+
+    # ─── JSON-RPC 2.0 Method Dispatch ───
     method = body.get("method", "")
     params = body.get("params", {})
-    req_id = body.get("id", None)
-
-    # Tool dispatch table
-    tools = {
-        "get_current_workflow": lambda: get_current_workflow(),
-        "get_next_step": lambda: get_next_step(params.get("session_id")),
-        "log_step_result": lambda: log_step_result(
-            params.get("session_id"),
-            params.get("step_number"),
-            params.get("quality_rating"),
-            params.get("notes", "")
-        ),
-        "start_session": lambda: start_session(
-            params.get("user_id"),
-            params.get("workflow_id")
-        ),
-        "generate_style_prompt": lambda: generate_style_prompt(params.get("description", "")),
-        "build_lyric_structure": lambda: build_lyric_structure(
-            params.get("raw_lyrics", ""),
-            params.get("sections")
-        ),
-        "validate_prompt": lambda: validate_prompt(params.get("prompt_text", "")),
-        "save_style_prompt": lambda: save_style_prompt(
-            params.get("user_id"),
-            params.get("name"),
-            params.get("prompt_text"),
-            params.get("genre_tags"),
-            params.get("mood_tags"),
-            params.get("bpm")
-        ),
-        "recall_style": lambda: recall_style(
-            params.get("user_id"),
-            params.get("mood"),
-            params.get("genre")
-        ),
-        "save_client": lambda: save_client(
-            params.get("user_id"),
-            params.get("name"),
-            params.get("vocal_type"),
-            params.get("genres"),
-            params.get("bpm_range"),
-            params.get("emotional_register")
-        ),
-        "get_client_brief": lambda: get_client_brief(
-            params.get("user_id"),
-            params.get("client_name"),
-            params.get("concept", "")
-        ),
-        "submit_workflow": lambda: submit_workflow(
-            params.get("user_id"),
-            params.get("steps", []),
-            params.get("notes", ""),
-            params.get("session_data")
-        ),
-        "vote_on_pattern": lambda: vote_on_pattern(
-            params.get("user_id"),
-            params.get("pattern_id"),
-            params.get("rating"),
-            params.get("session_evidence")
-        ),
-        "get_pattern_status": lambda: get_pattern_status(),
-    }
+    req_id = body.get("id")
 
     if method == "initialize":
-        return JSONResponse({
+        data = {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
                 "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "serverInfo": {
-                    "name": "SunoCoach",
-                    "version": "1.0.0"
-                }
+                "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
+                "capabilities": {"tools": {}}
             }
-        })
+        }
+        print(f"RESPONSE [initialize]: {json.dumps(data)}")
+        return JSONResponse(data)
 
     if method == "tools/list":
-        manifest = await root()
-        return JSONResponse({
+        data = {
             "jsonrpc": "2.0",
             "id": req_id,
-            "result": {"tools": manifest.get("tools", [])}
-        })
+            "result": {"tools": MCP_TOOLS}
+        }
+        print(f"RESPONSE [tools/list]: {json.dumps(data)}")
+        return JSONResponse(data)
 
-    if method in tools:
-        try:
-            result = await tools[method]()
-            return JSONResponse({
+    if method == "tools/call":
+        tool_name = params.get("name")
+        arguments = params.get("arguments", {})
+
+        if tool_name not in TOOL_DISPATCH:
+            data = {
                 "jsonrpc": "2.0",
                 "id": req_id,
-                "result": result
-            })
+                "error": {"code": -32601, "message": f"Tool not found: {tool_name}"}
+            }
+            print(f"RESPONSE [tool-not-found]: {json.dumps(data)}")
+            return JSONResponse(data)
+
+        try:
+            result = await TOOL_DISPATCH[tool_name](arguments)
+            data = {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": json.dumps(result) if not isinstance(result, str) else result}]}
+            }
+            print(f"RESPONSE [tools/call-{tool_name}]: {json.dumps(data)}")
+            return JSONResponse(data)
         except Exception as e:
-            return JSONResponse({
+            data = {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "error": {"code": -32603, "message": str(e)}
-            }, status_code=500)
+            }
+            print(f"RESPONSE [tools/call-error]: {json.dumps(data)}")
+            return JSONResponse(data, status_code=500)
 
-    return JSONResponse({
+    # Unknown method
+    data = {
         "jsonrpc": "2.0",
         "id": req_id,
         "error": {"code": -32601, "message": f"Method not found: {method}"}
-    }, status_code=404)
+    }
+    print(f"RESPONSE [unknown-method]: {json.dumps(data)}")
+    return JSONResponse(data)
 
 
 # ─── HEALTH ENDPOINT ───
