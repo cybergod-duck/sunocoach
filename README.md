@@ -2,6 +2,10 @@
 
 AI music creation workflow coach that lives inside Claude. Community-validated patterns for Suno and any AI music generator. Style prompt engineering, lyric structure tagging, client profile management, and self-updating pattern detection.
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![MCP](https://img.shields.io/badge/MCP-Compatible-blue)
+![Stripe](https://img.shields.io/badge/Billing-Stripe-635BFF)
+
 ## Stack
 
 - **Backend:** FastAPI + Uvicorn (Python 3.11)
@@ -13,13 +17,30 @@ AI music creation workflow coach that lives inside Claude. Community-validated p
 
 ## Connect to Claude
 
-Go to **claude.ai → Settings → Connectors → Add Custom Connector** → paste your deployed URL:
+Go to **claude.ai → Settings → Integrations → Add Integration** → paste your deployed URL:
 
 ```
 https://sunocoach.onrender.com
 ```
 
 OAuth handles auth automatically — no API keys to copy-paste.
+
+## Tools
+
+- `get_current_workflow` — Returns the active workflow pattern with drift status
+- `get_next_step` — Returns exact instruction for the current step in plain English
+- `log_step_result` — Stores result, advances session state, checks for drift
+- `start_session` — Creates a new coaching session
+- `generate_style_prompt` — Takes plain English, returns structured style DNA prompt
+- `build_lyric_structure` — Applies correct bracket tagging to raw lyrics
+- `validate_prompt` — Scores prompt against all rules, returns issues with fixes
+- `save_style_prompt` — Validates then stores in user's style library
+- `recall_style` — Fuzzy search user's style prompt library
+- `save_client` — Creates or updates client profile
+- `get_client_brief` — Returns ready-to-paste style prompt + lyric structure from client profile
+- `submit_workflow` — Contributor tier: submits new workflow pattern for community scoring
+- `vote_on_pattern` — Contributor tier: vote on submitted pattern
+- `get_pattern_status` — Returns active/drifting/calibrating status + explanation
 
 ## Tiers
 
