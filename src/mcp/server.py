@@ -256,22 +256,32 @@ async def mcp_handler(request: Request):
     if request.method == "GET":
         return await root()
 
+    # ─── INCOMING REQUEST LOG ───
+    body = await request.json()
+    headers = dict(request.headers)
+    print(f"=== MCP HIT ===")
+    print(f"METHOD: {body.get('method')}")
+    print(f"BODY: {json.dumps(body)}")
+    print(f"AUTH: {headers.get('authorization', 'MISSING')}")
+    print(f"ACCEPT: {headers.get('accept', 'MISSING')}")
+
     # ─── OAuth 2.1: ALL POST requests require valid Bearer token ───
     auth_header = request.headers.get("Authorization", "")
     base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
 
     if not auth_header.startswith("Bearer "):
-        body = await request.json()
+        data = {
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "error": {
+                "code": -32001,
+                "message": "Unauthorized. Use OAuth 2.1 with PKCE to authenticate.",
+                "authorization_url": f"{base_url}/oauth/authorize"
+            }
+        }
+        print(f"RESPONSE [401-challenge]: {json.dumps(data)}")
         return JSONResponse(
-            {
-                "jsonrpc": "2.0",
-                "id": body.get("id"),
-                "error": {
-                    "code": -32001,
-                    "message": "Unauthorized. Use OAuth 2.1 with PKCE to authenticate.",
-                    "authorization_url": f"{base_url}/oauth/authorize"
-                }
-            },
+            data,
             status_code=401,
             headers={
                 "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{base_url}/.well-known/oauth-authorization-server"'
@@ -281,25 +291,25 @@ async def mcp_handler(request: Request):
     try:
         await validate_token(request)
     except HTTPException:
-        body = await request.json()
+        data = {
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
+        }
+        print(f"RESPONSE [401-invalid-token]: {json.dumps(data)}")
         return JSONResponse(
-            {
-                "jsonrpc": "2.0",
-                "id": body.get("id"),
-                "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
-            },
+            data,
             status_code=401,
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
         )
 
     # ─── JSON-RPC 2.0 Method Dispatch ───
-    body = await request.json()
     method = body.get("method", "")
     params = body.get("params", {})
     req_id = body.get("id")
 
     if method == "initialize":
-        return JSONResponse({
+        data = {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
@@ -307,46 +317,58 @@ async def mcp_handler(request: Request):
                 "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
                 "capabilities": {"tools": {}}
             }
-        })
+        }
+        print(f"RESPONSE [initialize]: {json.dumps(data)}")
+        return JSONResponse(data)
 
     if method == "tools/list":
-        return JSONResponse({
+        data = {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {"tools": MCP_TOOLS}
-        })
+        }
+        print(f"RESPONSE [tools/list]: {json.dumps(data)}")
+        return JSONResponse(data)
 
     if method == "tools/call":
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
 
         if tool_name not in TOOL_DISPATCH:
-            return JSONResponse({
+            data = {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "error": {"code": -32601, "message": f"Tool not found: {tool_name}"}
-            })
+            }
+            print(f"RESPONSE [tool-not-found]: {json.dumps(data)}")
+            return JSONResponse(data)
 
         try:
             result = await TOOL_DISPATCH[tool_name](arguments)
-            return JSONResponse({
+            data = {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "result": {"content": [{"type": "text", "text": json.dumps(result) if not isinstance(result, str) else result}]}
-            })
+            }
+            print(f"RESPONSE [tools/call-{tool_name}]: {json.dumps(data)}")
+            return JSONResponse(data)
         except Exception as e:
-            return JSONResponse({
+            data = {
                 "jsonrpc": "2.0",
                 "id": req_id,
                 "error": {"code": -32603, "message": str(e)}
-            }, status_code=500)
+            }
+            print(f"RESPONSE [tools/call-error]: {json.dumps(data)}")
+            return JSONResponse(data, status_code=500)
 
     # Unknown method
-    return JSONResponse({
+    data = {
         "jsonrpc": "2.0",
         "id": req_id,
         "error": {"code": -32601, "message": f"Method not found: {method}"}
-    })
+    }
+    print(f"RESPONSE [unknown-method]: {json.dumps(data)}")
+    return JSONResponse(data)
 
 # ─── MCP MANIFEST (root) ───
 @app.get("/")
