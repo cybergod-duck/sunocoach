@@ -154,7 +154,7 @@ async def validate_token(request: Request) -> Dict[str, Any]:
 
 async def get_oauth_discovery() -> Dict[str, Any]:
     """OAuth 2.0 discovery endpoint."""
-    base_url = os.environ.get("APP_URL", "https://sunocoach.YOUR_SUBDOMAIN.workers.dev")
+    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
     return {
         "issuer": base_url,
         "authorization_endpoint": f"{base_url}/oauth/authorize",

@@ -5,7 +5,7 @@ compatibility_flags = ["python_workers"]
 
 # Environment variables (set via wrangler secret put)
 [vars]
-APP_URL = "https://sunocoach.j0b3.workers.dev"
+APP_URL = "https://sunocoach.onrender.com"
 OAUTH_CLIENT_ID = "sunocoach-claude"
 
 # KV namespace for session cache
