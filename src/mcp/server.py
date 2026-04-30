@@ -276,8 +276,13 @@ async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP"
         print(f"RESPONSE [initialize]: {json.dumps(data)}")
         return JSONResponse(data)
 
-    if method == "initialized":
-        print(f"RESPONSE [initialized]: 204")
+    if method == "notifications/initialized":
+        print(f"RESPONSE [notifications/initialized]: 204")
+        return Response(status_code=204)
+
+    # Catch any other notifications/ methods silently
+    if method and method.startswith("notifications/"):
+        print(f"RESPONSE [notifications/*]: 204")
         return Response(status_code=204)
 
     # ─── AUTH GATE: everything beyond here requires valid Bearer token ───
