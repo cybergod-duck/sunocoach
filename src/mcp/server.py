@@ -48,40 +48,219 @@ app.add_middleware(
     max_age=86400,
 )
 
-# ─── /mcp ALIAS (Claude Streamable HTTP compatibility) ───
-# Claude requires POST /mcp for Streamable HTTP MCP transport.
-# This aliases /mcp to the working JSON-RPC handlers at POST / and GET /.
+# ─── MCP TOOL DEFINITIONS (MCP spec requires camelCase inputSchema) ───
+MCP_TOOLS = [
+    {
+        "name": "get_current_workflow",
+        "description": "Returns the active workflow pattern with all steps and drift status.",
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "get_next_step",
+        "description": "Returns exact instruction for the current step in plain English.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"session_id": {"type": "string"}},
+            "required": ["session_id"]
+        }
+    },
+    {
+        "name": "log_step_result",
+        "description": "Stores result, advances session state, checks for drift.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "step_number": {"type": "integer"},
+                "quality_rating": {"type": "integer", "minimum": 1, "maximum": 5},
+                "notes": {"type": "string"}
+            },
+            "required": ["session_id", "step_number", "quality_rating"]
+        }
+    },
+    {
+        "name": "start_session",
+        "description": "Creates a new coaching session.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string"},
+                "workflow_id": {"type": "string"}
+            },
+            "required": ["user_id"]
+        }
+    },
+    {
+        "name": "generate_style_prompt",
+        "description": "Takes plain English, returns structured style DNA prompt.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"description": {"type": "string"}},
+            "required": ["description"]
+        }
+    },
+    {
+        "name": "build_lyric_structure",
+        "description": "Applies correct bracket tagging to raw lyrics.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "raw_lyrics": {"type": "string"},
+                "sections": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["raw_lyrics"]
+        }
+    },
+    {
+        "name": "validate_prompt",
+        "description": "Scores prompt against all rules, returns issues with fixes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"prompt_text": {"type": "string"}},
+            "required": ["prompt_text"]
+        }
+    },
+    {
+        "name": "save_style_prompt",
+        "description": "Validates then stores in user's style library.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "prompt_text": {"type": "string"},
+                "genre_tags": {"type": "array", "items": {"type": "string"}},
+                "mood_tags": {"type": "array", "items": {"type": "string"}},
+                "bpm": {"type": "integer"}
+            },
+            "required": ["name", "prompt_text"]
+        }
+    },
+    {
+        "name": "recall_style",
+        "description": "Fuzzy search user's style prompt library.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mood": {"type": "string"},
+                "genre": {"type": "string"}
+            }
+        }
+    },
+    {
+        "name": "save_client",
+        "description": "Creates or updates client profile.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "vocal_type": {"type": "string"},
+                "genres": {"type": "array", "items": {"type": "string"}},
+                "bpm_range": {"type": "object", "properties": {"min": {"type": "integer"}, "max": {"type": "integer"}}},
+                "emotional_register": {"type": "string"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "get_client_brief",
+        "description": "Returns ready-to-paste style prompt + lyric structure from client profile.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "client_name": {"type": "string"},
+                "concept": {"type": "string"}
+            },
+            "required": ["client_name", "concept"]
+        }
+    },
+    {
+        "name": "submit_workflow",
+        "description": "Contributor tier: submits new workflow pattern for community scoring.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "steps": {"type": "array"},
+                "notes": {"type": "string"},
+                "session_data": {"type": "array"}
+            },
+            "required": ["steps"]
+        }
+    },
+    {
+        "name": "vote_on_pattern",
+        "description": "Contributor tier: vote on submitted pattern.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pattern_id": {"type": "string"},
+                "rating": {"type": "integer", "minimum": 1, "maximum": 5},
+                "session_evidence": {"type": "object"}
+            },
+            "required": ["pattern_id", "rating"]
+        }
+    },
+    {
+        "name": "get_pattern_status",
+        "description": "Returns active/drifting/calibrating status + explanation.",
+        "inputSchema": {"type": "object", "properties": {}}
+    }
+]
+
+TOOL_DISPATCH = {
+    "get_current_workflow": lambda args: get_current_workflow(),
+    "get_next_step": lambda args: get_next_step(args.get("session_id")),
+    "log_step_result": lambda args: log_step_result(
+        args.get("session_id"), args.get("step_number"),
+        args.get("quality_rating"), args.get("notes", "")
+    ),
+    "start_session": lambda args: start_session(args.get("user_id"), args.get("workflow_id")),
+    "generate_style_prompt": lambda args: generate_style_prompt(args.get("description", "")),
+    "build_lyric_structure": lambda args: build_lyric_structure(
+        args.get("raw_lyrics", ""), args.get("sections")
+    ),
+    "validate_prompt": lambda args: validate_prompt(args.get("prompt_text", "")),
+    "save_style_prompt": lambda args: save_style_prompt(
+        args.get("user_id"), args.get("name"), args.get("prompt_text"),
+        args.get("genre_tags"), args.get("mood_tags"), args.get("bpm")
+    ),
+    "recall_style": lambda args: recall_style(args.get("user_id"), args.get("mood"), args.get("genre")),
+    "save_client": lambda args: save_client(
+        args.get("user_id"), args.get("name"), args.get("vocal_type"),
+        args.get("genres"), args.get("bpm_range"), args.get("emotional_register")
+    ),
+    "get_client_brief": lambda args: get_client_brief(args.get("user_id"), args.get("client_name"), args.get("concept", "")),
+    "submit_workflow": lambda args: submit_workflow(
+        args.get("user_id"), args.get("steps", []), args.get("notes", ""), args.get("session_data")
+    ),
+    "vote_on_pattern": lambda args: vote_on_pattern(
+        args.get("user_id"), args.get("pattern_id"), args.get("rating"), args.get("session_evidence")
+    ),
+    "get_pattern_status": lambda args: get_pattern_status(),
+}
+
+
+# ─── /mcp ENDPOINT (Claude Streamable HTTP / OAuth 2.1) ───
+# Claude requires:
+#   POST /mcp → JSON-RPC 2.0 dispatcher for initialize, tools/list, tools/call
+#   GET /mcp  → MCP manifest (same as GET /)
+#
+# OAuth flow:
+#   1. Claude fetches discovery → finds registration_endpoint
+#   2. POST /oauth/register → gets client_id, client_secret
+#   3. GET /oauth/authorize → user signs in → gets auth code
+#   4. POST /oauth/token → exchanges code for Bearer token
+#   5. POST /mcp with Authorization: Bearer <token> → access granted
 @app.post("/mcp")
 @app.get("/mcp")
-async def mcp_endpoint(request: Request):
-    """Handle MCP requests at /mcp for Claude compatibility.
-    
-    POST /mcp → JSON-RPC messages (initialize, tools/list, tools/call)
-    GET /mcp  → MCP manifest (same as GET /)
-    
-    OAuth 2.1: ALL POST requests require valid Bearer token.
-    Unauthenticated requests get a 401 challenge with WWW-Authenticate header,
-    telling Claude to start the OAuth flow via the authorization server.
-    """
+async def mcp_handler(request: Request):
     if request.method == "GET":
         return await root()
-    
-    # ─── OAuth 2.1 required for ALL POST requests ───
-    # Claude's connector flow:
-    #   1. Fetch discovery → finds registration_endpoint
-    #   2. POST /oauth/register → gets client_id, client_secret
-    #   3. GET /oauth/authorize → user signs in → gets auth code
-    #   4. POST /oauth/token → exchanges code for Bearer token
-    #   5. POST /mcp with Authorization: Bearer <token> → access granted
-    #
-    # If we return 200 without challenging, Claude assumes OAuth is not needed
-    # and shows only "Uninstall" (no "Sign In" button).
-    
+
+    # ─── OAuth 2.1: ALL POST requests require valid Bearer token ───
     auth_header = request.headers.get("Authorization", "")
-    
+    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
+
     if not auth_header.startswith("Bearer "):
-        # No token at all → challenge Claude to start OAuth flow
-        base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
         body = await request.json()
         return JSONResponse(
             {
@@ -98,12 +277,10 @@ async def mcp_endpoint(request: Request):
                 "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{base_url}/.well-known/oauth-authorization-server"'
             }
         )
-    
-    # Has Bearer token → validate it
+
     try:
         await validate_token(request)
     except HTTPException:
-        # Token invalid or expired
         body = await request.json()
         return JSONResponse(
             {
@@ -114,9 +291,62 @@ async def mcp_endpoint(request: Request):
             status_code=401,
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
         )
-    
-    # Token valid → delegate to JSON-RPC handler
-    return await mcp_rpc(request)
+
+    # ─── JSON-RPC 2.0 Method Dispatch ───
+    body = await request.json()
+    method = body.get("method", "")
+    params = body.get("params", {})
+    req_id = body.get("id")
+
+    if method == "initialize":
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
+                "capabilities": {"tools": {}}
+            }
+        })
+
+    if method == "tools/list":
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"tools": MCP_TOOLS}
+        })
+
+    if method == "tools/call":
+        tool_name = params.get("name")
+        arguments = params.get("arguments", {})
+
+        if tool_name not in TOOL_DISPATCH:
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32601, "message": f"Tool not found: {tool_name}"}
+            })
+
+        try:
+            result = await TOOL_DISPATCH[tool_name](arguments)
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": json.dumps(result) if not isinstance(result, str) else result}]}
+            })
+        except Exception as e:
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32603, "message": str(e)}
+            }, status_code=500)
+
+    # Unknown method
+    return JSONResponse({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {"code": -32601, "message": f"Method not found: {method}"}
+    })
 
 # ─── MCP MANIFEST (root) ───
 @app.get("/")
@@ -130,12 +360,12 @@ async def root():
             {
                 "name": "get_current_workflow",
                 "description": "Returns the active workflow pattern with all steps and drift status.",
-                "input_schema": {"type": "object", "properties": {}}
+                "inputSchema": {"type": "object", "properties": {}}
             },
             {
                 "name": "get_next_step",
                 "description": "Returns exact instruction for the current step in plain English.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {"session_id": {"type": "string"}},
                     "required": ["session_id"]
@@ -144,7 +374,7 @@ async def root():
             {
                 "name": "log_step_result",
                 "description": "Stores result, advances session state, checks for drift.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "session_id": {"type": "string"},
@@ -158,7 +388,7 @@ async def root():
             {
                 "name": "start_session",
                 "description": "Creates a new coaching session.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "user_id": {"type": "string"},
@@ -170,7 +400,7 @@ async def root():
             {
                 "name": "generate_style_prompt",
                 "description": "Takes plain English, returns structured style DNA prompt.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {"description": {"type": "string"}},
                     "required": ["description"]
@@ -179,7 +409,7 @@ async def root():
             {
                 "name": "build_lyric_structure",
                 "description": "Applies correct bracket tagging to raw lyrics.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "raw_lyrics": {"type": "string"},
@@ -191,7 +421,7 @@ async def root():
             {
                 "name": "validate_prompt",
                 "description": "Scores prompt against all rules, returns issues with fixes.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {"prompt_text": {"type": "string"}},
                     "required": ["prompt_text"]
@@ -200,7 +430,7 @@ async def root():
             {
                 "name": "save_style_prompt",
                 "description": "Validates then stores in user's style library.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string"},
@@ -215,7 +445,7 @@ async def root():
             {
                 "name": "recall_style",
                 "description": "Fuzzy search user's style prompt library.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "mood": {"type": "string"},
@@ -226,7 +456,7 @@ async def root():
             {
                 "name": "save_client",
                 "description": "Creates or updates client profile.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string"},
@@ -241,7 +471,7 @@ async def root():
             {
                 "name": "get_client_brief",
                 "description": "Returns ready-to-paste style prompt + lyric structure from client profile.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "client_name": {"type": "string"},
@@ -253,7 +483,7 @@ async def root():
             {
                 "name": "submit_workflow",
                 "description": "Contributor tier: submits new workflow pattern for community scoring.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "steps": {"type": "array"},
@@ -266,7 +496,7 @@ async def root():
             {
                 "name": "vote_on_pattern",
                 "description": "Contributor tier: vote on submitted pattern.",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {
                         "pattern_id": {"type": "string"},
@@ -279,7 +509,7 @@ async def root():
             {
                 "name": "get_pattern_status",
                 "description": "Returns active/drifting/calibrating status + explanation.",
-                "input_schema": {"type": "object", "properties": {}}
+                "inputSchema": {"type": "object", "properties": {}}
             }
         ],
         "endpoints": {
@@ -404,10 +634,6 @@ async def mcp_rpc(request: Request):
         "error": {"code": -32601, "message": f"Method not found: {method}"}
     }, status_code=404)
 
-# ─── MCP DISCOVERY ENDPOINT ───
-@app.get("/mcp")
-async def mcp_discovery():
-    return await root()
 
 # ─── HEALTH ENDPOINT ───
 @app.get("/health")
@@ -511,7 +737,6 @@ async def billing_checkout(request: Request):
     result = await create_checkout_session(token_data["user_id"], body.get("email", ""))
     return result
 
-# ─── MCP TOOL ENDPOINTS ───
 
 # ─── SHUTDOWN ───
 @app.on_event("shutdown")
