@@ -212,6 +212,118 @@ async def root():
         }
     }
 
+# ─── MCP JSON-RPC ENDPOINT (POST /) ───
+@app.post("/")
+async def mcp_rpc(request: Request):
+    body = await request.json()
+    method = body.get("method", "")
+    params = body.get("params", {})
+    req_id = body.get("id", None)
+
+    # Tool dispatch table
+    tools = {
+        "get_current_workflow": get_current_workflow,
+        "get_next_step": lambda: get_next_step(params.get("session_id")),
+        "log_step_result": lambda: log_step_result(
+            params.get("session_id"),
+            params.get("step_number"),
+            params.get("quality_rating"),
+            params.get("notes", "")
+        ),
+        "start_session": lambda: start_session(
+            params.get("user_id"),
+            params.get("workflow_id")
+        ),
+        "generate_style_prompt": lambda: generate_style_prompt(params.get("description", "")),
+        "build_lyric_structure": lambda: build_lyric_structure(
+            params.get("raw_lyrics", ""),
+            params.get("sections")
+        ),
+        "validate_prompt": lambda: validate_prompt(params.get("prompt_text", "")),
+        "save_style_prompt": lambda: save_style_prompt(
+            params.get("user_id"),
+            params.get("name"),
+            params.get("prompt_text"),
+            params.get("genre_tags"),
+            params.get("mood_tags"),
+            params.get("bpm")
+        ),
+        "recall_style": lambda: recall_style(
+            params.get("user_id"),
+            params.get("mood"),
+            params.get("genre")
+        ),
+        "save_client": lambda: save_client(
+            params.get("user_id"),
+            params.get("name"),
+            params.get("vocal_type"),
+            params.get("genres"),
+            params.get("bpm_range"),
+            params.get("emotional_register")
+        ),
+        "get_client_brief": lambda: get_client_brief(
+            params.get("user_id"),
+            params.get("client_name"),
+            params.get("concept", "")
+        ),
+        "submit_workflow": lambda: submit_workflow(
+            params.get("user_id"),
+            params.get("steps", []),
+            params.get("notes", ""),
+            params.get("session_data")
+        ),
+        "vote_on_pattern": lambda: vote_on_pattern(
+            params.get("user_id"),
+            params.get("pattern_id"),
+            params.get("rating"),
+            params.get("session_evidence")
+        ),
+        "get_pattern_status": get_pattern_status,
+    }
+
+    if method == "initialize":
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "SunoCoach",
+                    "version": "1.0.0"
+                }
+            }
+        })
+
+    if method == "tools/list":
+        manifest = await root()
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"tools": manifest.get("tools", [])}
+        })
+
+    if method in tools:
+        try:
+            result = await tools[method]()
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": result
+            })
+        except Exception as e:
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32603, "message": str(e)}
+            }, status_code=500)
+
+    return JSONResponse({
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {"code": -32601, "message": f"Method not found: {method}"}
+    }, status_code=404)
+
 # ─── MCP DISCOVERY ENDPOINT ───
 @app.get("/mcp")
 async def mcp_discovery():
@@ -232,6 +344,15 @@ async def health():
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_discovery():
     return await get_oauth_discovery()
+
+# ─── OAUTH PROTECTED RESOURCE ───
+@app.get("/.well-known/oauth-protected-resource")
+async def oauth_protected_resource():
+    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
+    return JSONResponse({
+        "resource": base_url,
+        "authorization_servers": [base_url]
+    })
 
 # ─── OAUTH AUTHORIZE ───
 @app.get("/oauth/authorize")
