@@ -1,4 +1,5 @@
 import os
+import json
 import secrets
 import hashlib
 import time
@@ -127,7 +128,17 @@ async def exchange_code_for_token(code: str, client_id: str, client_secret: str,
         if client_row["client_secret"] != client_secret:
             raise HTTPException(status_code=401, detail="Invalid client credentials")
         # Log redirect_uri validation against stored client redirect_uris
-        stored_uris = client_row["redirect_uris"] if isinstance(client_row["redirect_uris"], list) else []
+        # asyncpg returns JSONB as a raw str — must parse with json.loads()
+        raw_uris = client_row["redirect_uris"]
+        if isinstance(raw_uris, list):
+            stored_uris = raw_uris
+        elif isinstance(raw_uris, str):
+            try:
+                stored_uris = json.loads(raw_uris)
+            except (ValueError, TypeError):
+                stored_uris = []
+        else:
+            stored_uris = []
         print(f"[oauth] registered client '{client_id}' stored redirect_uris: {stored_uris}")
         print(f"[oauth] received redirect_uri: {redirect_uri}")
         if redirect_uri not in stored_uris:
@@ -285,7 +296,6 @@ async def validate_token(request: Request) -> Dict[str, Any]:
 
 async def register_client(client_metadata: Dict[str, Any]) -> Dict[str, Any]:
     """Dynamic Client Registration (OAuth 2.1) for Claude."""
-    import json
     client_id = f"claude-{secrets.token_urlsafe(16)}"
     client_secret = secrets.token_urlsafe(32)
     now = time.time()
