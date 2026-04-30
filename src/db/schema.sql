@@ -8,6 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL DEFAULT '',
     stripe_customer_id TEXT,
     stripe_subscription_id TEXT,
     tier TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'contributor', 'pro')),

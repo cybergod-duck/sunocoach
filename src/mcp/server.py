@@ -3,7 +3,7 @@ import json
 import traceback
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.tools import (
     get_current_workflow, get_next_step, log_step_result, start_session,
@@ -12,8 +12,9 @@ from mcp.tools import (
     submit_workflow, vote_on_pattern, get_pattern_status
 )
 from auth.oauth import (
-    create_authorization_url, exchange_code_for_token, refresh_access_token,
-    validate_token, get_oauth_discovery, register_client
+    CLIENT_ID, create_authorization_url, exchange_code_for_token,
+    refresh_access_token, validate_token, get_oauth_discovery,
+    register_client, login_user
 )
 from billing.stripe_handler import (
     create_checkout_session, handle_webhook, get_subscription_status
@@ -239,27 +240,12 @@ TOOL_DISPATCH = {
 }
 
 
-# ─── /mcp ENDPOINT (Claude Streamable HTTP / OAuth 2.1) ───
-# Claude requires:
-#   POST /mcp → JSON-RPC 2.0 dispatcher for initialize, tools/list, tools/call
-#   GET /mcp  → MCP manifest (same as GET /)
-#
-# OAuth flow:
-#   1. Claude fetches discovery → finds registration_endpoint
-#   2. POST /oauth/register → gets client_id, client_secret
-#   3. GET /oauth/authorize → user signs in → gets auth code
-#   4. POST /oauth/token → exchanges code for Bearer token
-#   5. POST /mcp with Authorization: Bearer <token> → access granted
-@app.post("/mcp")
-@app.get("/mcp")
-async def mcp_handler(request: Request):
-    if request.method == "GET":
-        return await root()
-
-    # ─── INCOMING REQUEST LOG ───
-    body = await request.json()
+# ─── SHARED JSON-RPC 2.0 DISPATCHER ───
+# Extracted so both /mcp and / routes use the same logic without duplication.
+async def _dispatch_jsonrpc(request: Request, body: dict, log_label: str = "MCP") -> JSONResponse:
+    """Authenticate and dispatch a JSON-RPC 2.0 request."""
     headers = dict(request.headers)
-    print(f"=== MCP HIT ===")
+    print(f"=== {log_label} HIT ===")
     print(f"METHOD: {body.get('method')}")
     print(f"BODY: {json.dumps(body)}")
     print(f"AUTH: {headers.get('authorization', 'MISSING')}")
@@ -369,6 +355,26 @@ async def mcp_handler(request: Request):
     }
     print(f"RESPONSE [unknown-method]: {json.dumps(data)}")
     return JSONResponse(data)
+
+
+# ─── /mcp ENDPOINT (Claude Streamable HTTP / OAuth 2.1) ───
+# Claude requires:
+#   POST /mcp → JSON-RPC 2.0 dispatcher for initialize, tools/list, tools/call
+#   GET /mcp  → MCP manifest (same as GET /)
+#
+# OAuth flow:
+#   1. Claude fetches discovery → finds registration_endpoint
+#   2. POST /oauth/register → gets client_id, client_secret
+#   3. GET /oauth/authorize → user signs in → gets auth code
+#   4. POST /oauth/token → exchanges code for Bearer token
+#   5. POST /mcp with Authorization: Bearer <token> → access granted
+@app.post("/mcp")
+@app.get("/mcp")
+async def mcp_handler(request: Request):
+    if request.method == "GET":
+        return await root()
+    body = await request.json()
+    return await _dispatch_jsonrpc(request, body, log_label="MCP")
 
 # ─── MCP MANIFEST (root) ───
 @app.get("/")
@@ -544,122 +550,11 @@ async def root():
         "mcp_endpoint": "/mcp"
     }
 
-# ─── MCP JSON-RPC ENDPOINT (POST /) — same logic as /mcp handler ───
+# ─── MCP JSON-RPC ENDPOINT (POST /) — delegates to shared dispatcher ───
 @app.post("/")
 async def mcp_root_handler(request: Request):
-    # ─── INCOMING REQUEST LOG ───
     body = await request.json()
-    headers = dict(request.headers)
-    print(f"=== MCP ROOT HIT ===")
-    print(f"METHOD: {body.get('method')}")
-    print(f"BODY: {json.dumps(body)}")
-    print(f"AUTH: {headers.get('authorization', 'MISSING')}")
-    print(f"ACCEPT: {headers.get('accept', 'MISSING')}")
-
-    # ─── OAuth 2.1: ALL POST requests require valid Bearer token ───
-    auth_header = request.headers.get("Authorization", "")
-    base_url = os.environ.get("APP_URL", "https://sunocoach.onrender.com")
-
-    if not auth_header.startswith("Bearer "):
-        data = {
-            "jsonrpc": "2.0",
-            "id": body.get("id"),
-            "error": {
-                "code": -32001,
-                "message": "Unauthorized. Use OAuth 2.1 with PKCE to authenticate.",
-                "authorization_url": f"{base_url}/oauth/authorize"
-            }
-        }
-        print(f"RESPONSE [401-challenge]: {json.dumps(data)}")
-        return JSONResponse(
-            data,
-            status_code=401,
-            headers={
-                "WWW-Authenticate": f'Bearer realm="sunocoach", authorization_server="{base_url}/.well-known/oauth-authorization-server"'
-            }
-        )
-
-    try:
-        await validate_token(request)
-    except HTTPException:
-        data = {
-            "jsonrpc": "2.0",
-            "id": body.get("id"),
-            "error": {"code": -32001, "message": "Unauthorized: Invalid or expired token"}
-        }
-        print(f"RESPONSE [401-invalid-token]: {json.dumps(data)}")
-        return JSONResponse(
-            data,
-            status_code=401,
-            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'}
-        )
-
-    # ─── JSON-RPC 2.0 Method Dispatch ───
-    method = body.get("method", "")
-    params = body.get("params", {})
-    req_id = body.get("id")
-
-    if method == "initialize":
-        data = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "SunoCoach", "version": "1.0.0"},
-                "capabilities": {"tools": {}}
-            }
-        }
-        print(f"RESPONSE [initialize]: {json.dumps(data)}")
-        return JSONResponse(data)
-
-    if method == "tools/list":
-        data = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {"tools": MCP_TOOLS}
-        }
-        print(f"RESPONSE [tools/list]: {json.dumps(data)}")
-        return JSONResponse(data)
-
-    if method == "tools/call":
-        tool_name = params.get("name")
-        arguments = params.get("arguments", {})
-
-        if tool_name not in TOOL_DISPATCH:
-            data = {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32601, "message": f"Tool not found: {tool_name}"}
-            }
-            print(f"RESPONSE [tool-not-found]: {json.dumps(data)}")
-            return JSONResponse(data)
-
-        try:
-            result = await TOOL_DISPATCH[tool_name](arguments)
-            data = {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "result": {"content": [{"type": "text", "text": json.dumps(result) if not isinstance(result, str) else result}]}
-            }
-            print(f"RESPONSE [tools/call-{tool_name}]: {json.dumps(data)}")
-            return JSONResponse(data)
-        except Exception as e:
-            data = {
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {"code": -32603, "message": str(e)}
-            }
-            print(f"RESPONSE [tools/call-error]: {json.dumps(data)}")
-            return JSONResponse(data, status_code=500)
-
-    # Unknown method
-    data = {
-        "jsonrpc": "2.0",
-        "id": req_id,
-        "error": {"code": -32601, "message": f"Method not found: {method}"}
-    }
-    print(f"RESPONSE [unknown-method]: {json.dumps(data)}")
-    return JSONResponse(data)
+    return await _dispatch_jsonrpc(request, body, log_label="MCP ROOT")
 
 
 # ─── HEALTH ENDPOINT ───
@@ -713,7 +608,7 @@ async def oauth_register(request: Request):
     result = await register_client(body)
     return JSONResponse(result)
 
-# ─── OAUTH AUTHORIZE (with PKCE support) ───
+# ─── OAUTH AUTHORIZE — serve HTML login page ───
 @app.get("/oauth/authorize")
 async def oauth_authorize(
     response_type: str,
@@ -726,11 +621,122 @@ async def oauth_authorize(
 ):
     if response_type != "code":
         raise HTTPException(status_code=400, detail="response_type must be 'code'")
-    result = await create_authorization_url(redirect_uri, scope, state, code_challenge, code_challenge_method)
-    return JSONResponse({
-        "authorization_url": result["authorization_url"],
-        "login_url": f"/oauth/login?redirect_uri={redirect_uri}&scope={scope}&state={state}"
-    })
+
+    import html
+    safe_redirect = html.escape(redirect_uri)
+    safe_state = html.escape(state)
+    safe_scope = html.escape(scope)
+    safe_client = html.escape(client_id)
+    safe_challenge = html.escape(code_challenge or "")
+    safe_challenge_method = html.escape(code_challenge_method or "")
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SunoCoach — Sign In</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }}
+    .card {{
+      background: #1a1a2e;
+      border-radius: 16px; padding: 40px; width: 380px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }}
+    h2 {{ color: #e0d6ff; font-size: 24px; margin-bottom: 8px; text-align: center; }}
+    .sub {{ color: #888; font-size: 14px; margin-bottom: 28px; text-align: center; }}
+    label {{ color: #b8b0d0; font-size: 14px; display: block; margin-bottom: 6px; }}
+    input[type="text"], input[type="password"] {{
+      width: 100%; padding: 12px 16px; border-radius: 8px; border: 1px solid #3a3560;
+      background: #16213e; color: #e0d6ff; font-size: 15px; margin-bottom: 18px;
+      outline: none; transition: border 0.2s;
+    }}
+    input:focus {{ border-color: #7c5cfc; }}
+    button {{
+      width: 100%; padding: 12px; border-radius: 8px; border: none;
+      background: linear-gradient(135deg, #7c5cfc, #5c3cfc);
+      color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }}
+    button:hover {{ transform: translateY(-1px); box-shadow: 0 8px 24px rgba(124,92,252,0.4); }}
+    .error {{ color: #ff6b6b; font-size: 13px; margin-top: 12px; text-align: center; display: none; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>🔐 SunoCoach</h2>
+    <p class="sub">Sign in to authorize Claude Desktop</p>
+    <form method="POST" action="/oauth/login">
+      <input type="hidden" name="state" value="{safe_state}" />
+      <input type="hidden" name="redirect_uri" value="{safe_redirect}" />
+      <input type="hidden" name="client_id" value="{safe_client}" />
+      <input type="hidden" name="scope" value="{safe_scope}" />
+      <input type="hidden" name="code_challenge" value="{safe_challenge}" />
+      <input type="hidden" name="code_challenge_method" value="{safe_challenge_method}" />
+      <label for="username">Email</label>
+      <input type="text" id="username" name="username" placeholder="you@example.com" required />
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" placeholder="Enter your password" required />
+      <button type="submit">Sign In</button>
+      <p class="error" id="error-msg"></p>
+    </form>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('error')) {{
+      document.getElementById('error-msg').textContent = params.get('error');
+      document.getElementById('error-msg').style.display = 'block';
+    }}
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
+
+
+# ─── OAUTH LOGIN — validate credentials, redirect back with code ───
+@app.post("/oauth/login")
+async def oauth_login(request: Request):
+    form = await request.form()
+    username = str(form.get("username", ""))
+    password = str(form.get("password", ""))
+    redirect_uri = str(form.get("redirect_uri", ""))
+    state = str(form.get("state", ""))
+    scope = str(form.get("scope", "read"))
+    code_challenge_raw = form.get("code_challenge")
+    code_challenge = str(code_challenge_raw) if code_challenge_raw else None
+    code_challenge_method_raw = form.get("code_challenge_method")
+    code_challenge_method = str(code_challenge_method_raw) if code_challenge_method_raw else None
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+
+    try:
+        result = await login_user(
+            email=username,
+            password=password,
+            redirect_uri=redirect_uri,
+            scope=scope,
+            state=state,
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method
+        )
+        return RedirectResponse(url=result["redirect_url"], status_code=302)
+    except HTTPException:
+        import html
+        safe_redirect = html.escape(redirect_uri)
+        safe_state = html.escape(state)
+        safe_scope = html.escape(scope)
+        error_msg = "Invalid+email+or+password"
+        return RedirectResponse(
+            url=f"/oauth/authorize?response_type=code&client_id={CLIENT_ID}&redirect_uri={safe_redirect}&scope={safe_scope}&state={safe_state}&error={error_msg}",
+            status_code=302
+        )
 
 # ─── OAUTH TOKEN (with PKCE verification) ───
 @app.post("/oauth/token")

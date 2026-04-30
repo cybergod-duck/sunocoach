@@ -2,6 +2,7 @@ import os
 import secrets
 import hashlib
 import time
+import base64
 from typing import Dict, Any, Optional
 from fastapi import Request, HTTPException
 from db.client import fetchrow, execute
@@ -34,11 +35,14 @@ def _generate_code() -> str:
     return secrets.token_urlsafe(24)
 
 
+def _hash_password(password: str) -> str:
+    """Return SHA-256 hash of password."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
 def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
     """Verify PKCE S256 challenge."""
     computed = hashlib.sha256(code_verifier.encode()).digest()
-    computed_b64 = secrets.token_urlsafe(len(computed))[:43]  # Base64url without padding
-    import base64
     computed_b64 = base64.urlsafe_b64encode(computed).decode().rstrip('=')
     return computed_b64 == code_challenge
 
@@ -69,6 +73,48 @@ async def create_authorization_url(redirect_uri: str, scope: str = "read", state
         "authorization_url": f"/oauth/authorize?response_type=code&client_id={CLIENT_ID}&redirect_uri={redirect_uri}&scope={scope}&state={state}",
         "code": code  # For testing/dev only
     }
+
+
+async def login_user(email: str, password: str, redirect_uri: str, scope: str, state: str, code_challenge: Optional[str] = None, code_challenge_method: Optional[str] = None) -> Dict[str, Any]:
+    """Validate credentials, upsert user, generate auth code, return redirect info."""
+    # Validate redirect URI
+    if redirect_uri not in ALLOWED_REDIRECT_URIS:
+        raise HTTPException(status_code=400, detail=f"Redirect URI not whitelisted: {redirect_uri}")
+
+    if code_challenge_method and code_challenge_method != "S256":
+        raise HTTPException(status_code=400, detail="Only S256 code_challenge_method is supported")
+
+    password_hash = _hash_password(password)
+
+    # Upsert user — auto-register on first login
+    existing = await fetchrow("SELECT id, password_hash FROM users WHERE email = $1", email)
+
+    if existing:
+        if existing["password_hash"] and existing["password_hash"] != password_hash:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        user_id = existing["id"]
+    else:
+        row = await fetchrow(
+            "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id",
+            email, password_hash
+        )
+        user_id = row["id"]
+
+    # Generate auth code
+    code = _generate_code()
+    _auth_codes[code] = {
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+        "created_at": time.time(),
+        "used": False,
+        "user_id": user_id
+    }
+
+    redirect_url = f"{redirect_uri}?code={code}&state={state}" if state else f"{redirect_uri}?code={code}"
+    return {"redirect_url": redirect_url}
 
 
 async def exchange_code_for_token(code: str, client_id: str, client_secret: str, redirect_uri: str, code_verifier: Optional[str] = None) -> Dict[str, Any]:
@@ -117,7 +163,7 @@ async def exchange_code_for_token(code: str, client_id: str, client_secret: str,
         "created_at": time.time(),
         "expires_at": time.time() + TOKEN_EXPIRY,
         "scope": auth_data["scope"],
-        "user_id": None  # Set after user creation/login
+        "user_id": auth_data.get("user_id")  # Set from login flow
     }
 
     return {
