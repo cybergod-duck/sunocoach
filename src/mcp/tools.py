@@ -94,7 +94,8 @@ async def get_current_workflow() -> Dict[str, Any]:
         "status": pattern["status"],
         "consistency_score": float(pattern["consistency_score"]),
         "vote_count": pattern["vote_count"],
-        "steps": pattern["steps"],
+        "total_steps": len(pattern["steps"]),
+        "instruction": "DO NOT list all steps. Call get_next_step to reveal the current step instruction.",
         "drift_warning": drift.get("warning") if drift else None,
         "drift_detected": drift.get("detected", False) if drift else False
     }
