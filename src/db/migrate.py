@@ -32,6 +32,7 @@ async def run_migrations() -> None:
         await _v2_oauth_tables(conn)
         await _v3_trigger(conn)
         await _v4_seed_static_client(conn)
+        await _v5_seed_workflow(conn)
         log.info("[migrate] All migrations complete ✅")
 
 
@@ -386,3 +387,118 @@ async def _v4_seed_static_client(conn) -> None:
         client_id, client_secret, redirect_uris, time.time(),
     )
     log.info(f"[migrate/v4] Static client '{client_id}' upserted ✅")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# v5: Seed canonical 10-step workflow pattern
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _v5_seed_workflow(conn) -> None:
+    """
+    Upsert the canonical 'cover-extend-ghost' 10-step workflow.
+    Rich step data includes mode, extend_from, hidden tips, and success signals
+    so Claude can give context-aware guidance at each step.
+    Also adds session_steps.suno_action column for adaptive learning.
+    """
+    import json as _json
+    log.info("[migrate/v5] Seeding canonical workflow pattern …")
+
+    steps = [
+        {
+            "step": 1, "action": "Create song with Style + Lyrics",
+            "mode": "create", "use_style": True, "use_lyrics": True,
+            "extend_from": None, "pick": "best_clip",
+            "note": "Seed the sound DNA. Generate 2 clips and pick the one that feels closest to your vision — even if it's not perfect yet.",
+            "success_signal": "Clip sounds close to your vision"
+        },
+        {
+            "step": 2, "action": "Cover with Style only (locks sound)",
+            "mode": "cover", "use_style": True, "use_lyrics": False,
+            "extend_from": None,
+            "note": "Style only — do NOT include lyrics. This bakes the sonic texture in place so it survives future extends.",
+            "success_signal": "Sound is locked in, instrumental character preserved"
+        },
+        {
+            "step": 3, "action": "Extend from autoselected section with Lyrics only",
+            "mode": "extend", "use_style": False, "use_lyrics": True,
+            "extend_from": "autoselected", "pick": "best",
+            "note": "Power refresh. Let Suno pick the extend point (autoselected). Lyrics only — no style. Pick the best result.",
+            "success_signal": "Vocals feel more natural and locked in"
+        },
+        {
+            "step": 4, "action": "Get Full Song",
+            "mode": "get_full_song", "use_style": False, "use_lyrics": False,
+            "extend_from": None,
+            "note": "Click 'Get Full Song' on the best clip from step 3. This stitches it into a complete track.",
+            "success_signal": "Full-length track generated"
+        },
+        {
+            "step": 5, "action": "Cover → Use Styles & Lyrics",
+            "mode": "use_styles_and_lyrics", "use_style": True, "use_lyrics": True,
+            "extend_from": None,
+            "note": "From the Full Song: click '...' menu → Cover → select 'Use Styles & Lyrics' (NOT regular Cover). This is different from a plain cover — it unlocks Extend again and refreshes the style DNA.",
+            "success_signal": "New track generated with full style + lyrics baked in"
+        },
+        {
+            "step": 6, "action": "Extend from END with Style (creates ghost track)",
+            "mode": "extend", "use_style": True, "use_lyrics": False,
+            "extend_from": "end",
+            "note": "CRITICAL: Extend from the very END of the track (drag the marker to the last timestamp). Style only — no lyrics. This creates the ghost track extension.",
+            "success_signal": "Ghost track extension generated beyond the song end"
+        },
+        {
+            "step": 7, "action": "Cover ghost track extension with Lyrics + Style",
+            "mode": "cover", "use_style": True, "use_lyrics": True,
+            "extend_from": None,
+            "note": "Open the extension from step 6 — find it in the song details panel on the RIGHT SIDE of the screen. Cover it with both style and lyrics. This powers up the ghost track.",
+            "success_signal": "Ghost track sounds fuller and more powerful"
+        },
+        {
+            "step": 8, "action": "Extend from 00:01 → Get Full Song",
+            "mode": "extend", "use_style": False, "use_lyrics": False,
+            "extend_from": "00:01", "pick": "best",
+            "note": "CRITICAL: Extend from 00:01 (one second in — not zero, not autoselected). This triggers RECREATE mode, which rebuilds the entire song with all accumulated sonic character embedded. Pick the best result, then click Get Full Song. Supercharges the sound — bigger, clearer, more powerful.",
+            "success_signal": "Song sounds noticeably bigger and clearer than before step 8"
+        },
+        {
+            "step": 9, "action": "Cover → Use Styles & Lyrics → Copy the simplified style",
+            "mode": "use_styles_and_lyrics", "use_style": True, "use_lyrics": True,
+            "extend_from": None,
+            "note": "Select 'Use Styles & Lyrics' from the Cover menu. Suno auto-generates a SIMPLIFIED style string in the style field. Copy that simplified string — it is Suno's own distillation of your song's sound DNA. Save it for the optional refinement step.",
+            "success_signal": "Simplified style string appears — it is shorter and cleaner than your original"
+        },
+        {
+            "step": 10, "action": "Regular Cover of step 9 version using the FULL style",
+            "mode": "cover", "use_style": True, "use_lyrics": False,
+            "extend_from": None,
+            "note": "Cover the 'Use Styles & Lyrics' version from step 9 using your FULL original style prompt (not the simplified one). This is the song completion step.",
+            "success_signal": "Final song sounds clean, complete, and polished"
+        },
+        {
+            "step": 11, "action": "[Optional] Cover step 10 with the simplified style for refinement",
+            "mode": "cover", "use_style": True, "use_lyrics": False,
+            "extend_from": None, "optional": True,
+            "note": "Take the simplified style string from step 9 and do a regular Cover on the step 10 version. This is a refinement pass — it can add extra polish but is not always necessary. You can also click Create a few more times or cover the cover.",
+            "success_signal": "Song has an extra layer of polish — use this version if it sounds better"
+        },
+    ]
+
+    await conn.execute(
+        """
+        INSERT INTO workflow_patterns (name, version, steps, status, consistency_score, vote_count)
+        VALUES ($1, $2, $3::jsonb, 'active', 95.0, 0)
+        ON CONFLICT (name, version) DO UPDATE
+            SET steps  = EXCLUDED.steps,
+                status = 'active'
+        """,
+        "cover-extend-ghost", 1, _json.dumps(steps),
+    )
+
+    # Add suno_action column to session_steps if missing (for adaptive learning)
+    if not await _column_exists(conn, "session_steps", "suno_action"):
+        await conn.execute(
+            "ALTER TABLE session_steps ADD COLUMN suno_action TEXT DEFAULT ''"
+        )
+        log.info("[migrate/v5] Added session_steps.suno_action column ✅")
+
+    log.info("[migrate/v5] Canonical workflow seeded ✅")

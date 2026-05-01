@@ -102,9 +102,10 @@ async def get_current_workflow() -> Dict[str, Any]:
 
 # ─── MCP TOOL: get_next_step ───
 async def get_next_step(session_id: str) -> Dict[str, Any]:
-    """Returns exact instruction for the current step in plain English."""
+    """Returns exact instruction for the current step with full context."""
     session = await fetchrow(
-        "SELECT s.*, wp.steps as workflow_steps FROM sessions s "
+        "SELECT s.*, wp.steps as workflow_steps, wp.name as pattern_name "
+        "FROM sessions s "
         "JOIN workflow_patterns wp ON s.workflow_pattern_id = wp.id "
         "WHERE s.id = $1", session_id
     )
@@ -113,27 +114,44 @@ async def get_next_step(session_id: str) -> Dict[str, Any]:
 
     steps = session["workflow_steps"]
     current = session["current_step"]
+    total = len(steps)
 
-    if current > len(steps):
+    if current > total:
         return {
             "session_id": session_id,
             "status": "completed",
-            "message": "All workflow steps completed. Final output is ready."
+            "message": "All workflow steps completed. Song is ready."
         }
 
     step = steps[current - 1]
+    is_optional = step.get("optional", False)
+
+    # Build a plain-English instruction Claude can read directly to the user
+    parts = [f"Step {current}/{total}: {step['action']}."]
+    if step.get("extend_from"):
+        parts.append(f"Extend from: {step['extend_from'].upper()}.")
+    if step.get("use_style") and step.get("use_lyrics"):
+        parts.append("Use both your style prompt AND lyrics.")
+    elif step.get("use_style"):
+        parts.append("Style only — do NOT include lyrics.")
+    elif step.get("use_lyrics"):
+        parts.append("Lyrics only — do NOT include style.")
+    parts.append(step.get("note", ""))
+
     return {
         "session_id": session_id,
         "step_number": current,
-        "total_steps": len(steps),
+        "total_steps": total,
+        "optional": is_optional,
         "action": step["action"],
+        "mode": step.get("mode"),
         "use_style": step.get("use_style", False),
         "use_lyrics": step.get("use_lyrics", False),
+        "extend_from": step.get("extend_from"),
+        "pick": step.get("pick"),
         "note": step.get("note", ""),
-        "instruction": f"Step {current}/{len(steps)}: {step['action']}. "
-                       f"{'Use your style prompt. ' if step.get('use_style') else ''}"
-                       f"{'Paste your lyrics. ' if step.get('use_lyrics') else ''}"
-                       f"{step.get('note', '')}"
+        "success_signal": step.get("success_signal", ""),
+        "instruction": " ".join(parts)
     }
 
 
