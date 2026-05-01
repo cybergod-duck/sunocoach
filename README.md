@@ -1,17 +1,26 @@
 # SunoCoach
 
-AI music creation workflow coach that lives inside Claude. Community-validated patterns for Suno and any AI music generator. Style prompt engineering, lyric structure tagging, client profile management, and self-updating pattern detection.
+AI music creation workflow coach that lives inside Claude as an MCP Connector. Community-validated patterns for Suno and any AI music generator. Features style prompt engineering, lyric structure tagging, client profile management, self-updating pattern detection, and strict, hand-held step-by-step guidance.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![MCP](https://img.shields.io/badge/MCP-Compatible-blue)
 ![Stripe](https://img.shields.io/badge/Billing-Stripe-635BFF)
+
+## Features
+
+- **The "Cover-Extend-Ghost" Pattern:** Encodes the canonical 10-step method for locking sound, power refreshing, and supercharging tracks via the 0:01 RECREATE technique.
+- **Strict Step-by-Step Guidance:** Claude is explicitly blocked from "brain dumping" the steps. It is forced to hold the user's hand and walk them through the exact process one step at a time, complete with hidden knowledge context.
+- **Rich User Profiles:** Store and recall vocal ranges, preferred genres, and emotional registers for different music clients.
+- **Style Prompt Sanitization:** Automatically format and validate prompts to keep them under 7 descriptors, removing banned artist names to ensure Suno compliance.
+- **Lyric Tagging:** Automatically apply correct bracket tags `[Verse]`, `[Chorus]` and emotional delivery cues.
+- **Self-Healing Database:** Render runs idempotent migrations on every boot, ensuring the schema and OAuth clients never fall out of sync.
 
 ## Stack
 
 - **Backend:** FastAPI + Uvicorn (Python 3.11)
 - **Database:** PostgreSQL via asyncpg (Supabase in production)
 - **Cache:** In-memory (Redis optional)
-- **Auth:** OAuth 2.1 + PKCE (Claude MCP Connector)
+- **Auth:** OAuth 2.1 + PKCE (Claude MCP Connector with Static Client Support)
 - **Migrations:** Automatic idempotent startup migrations (no manual SQL needed)
 - **Billing:** Stripe Checkout + Webhooks
 - **Deploy:** Docker → Render/Railway/Fly.io
@@ -59,15 +68,17 @@ Migrations run **automatically on every app startup** — no manual `psql` comma
 
 ### How it works
 
-`src/db/migrate.py` contains three idempotent migration groups that are called from FastAPI's `@app.on_event("startup")` hook in `server.py`:
+`src/db/migrate.py` contains five idempotent migration groups that are called from FastAPI's `@app.on_event("startup")` hook in `server.py`:
 
 | Version | What it does |
 |---------|-------------|
 | **v1** (core) | `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"` + all core tables (users, workflow_patterns, sessions, etc.) |
 | **v2** (OAuth) | Adds `users.password_hash` if missing; creates `oauth_codes`, `oauth_tokens`, `oauth_clients` tables |
 | **v3** (trigger) | Ensures the `updated_at` auto-update trigger exists on the `users` table |
+| **v4** (static client) | Seeds the `sunocoach-claude` static OAuth client from Render environment variables |
+| **v5** (workflow seed) | Seeds the canonical 10-step `cover-extend-ghost` workflow with rich context, adds `suno_action` column |
 
-Every operation uses `IF NOT EXISTS`, `pg_catalog`, or `information_schema` checks, so it is **safe to run multiple times**. If the migration fails at startup, Render marks the deployment as failed (preventing traffic from hitting a broken schema).
+Every operation uses `IF NOT EXISTS`, `ON CONFLICT DO UPDATE`, or schema checks, so it is **safe to run multiple times**. If the migration fails at startup, Render marks the deployment as failed.
 
 ### If you need to reset / re-apply from scratch
 
